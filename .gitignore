@@ -2,10 +2,12 @@
 data/
 figures/
 out/
+notebooks/IT_data.h5
 
 # Ignore system files
 .DS_Store
 Thumbs.db
+
 
 # Ignore Python cache
 __pycache__/
