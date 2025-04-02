@@ -5,6 +5,10 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
+import gdown
+from sklearn.linear_model import LinearRegression, Ridge, RidgeCV, Lasso, ElasticNet, SGDRegressor
+from sklearn.decomposition import PCA
+
 def load_it_data(path_to_data):
     """ Load IT data
 
@@ -57,3 +61,48 @@ def visualize_img(stimulus,objects,stim_idx):
     plt.title(str(objects[stim_idx]))
     plt.show()
     return
+
+def download_it_data(path_to_data):
+    output = os.path.join(path_to_data,"IT_data.h5")
+    if not os.path.exists(output):
+        url = "https://drive.google.com/file/d/1s6caFNRpyR9m7ZM6XEv_e8mcXT3_PnHS/view?usp=share_link"
+        gdown.download(url, output, quiet=False, fuzzy=True)
+    else:
+        print("File already exists. Skipping download.")
+
+def print_data_info(stimulus_train, spikes_train):
+    n_stimulus, n_channels, img_size, _ = stimulus_train.shape
+    _, n_neurons = spikes_train.shape
+    print('The train dataset contains {} stimuli and {} IT neurons'.format(n_stimulus,n_neurons))
+    print('Each stimulus have {} channels (RGB)'.format(n_channels))
+    print('The size of the image is {}x{}'.format(img_size,img_size))
+
+def select_model(model_str: str):
+    models = {
+        "linear_regression_cf": LinearRegression(),
+        "ridge_cf": RidgeCV(),
+        "lasso": Lasso(),
+        "elastic_net": ElasticNet(),
+        "sgd_linear": SGDRegressor(l2=100),
+        "sgd_ridge": SGDRegressor(l1=100),
+        "sgd_elastic_net": SGDRegressor(),
+    }
+    
+    return models.get(model_str.lower(), None)
+
+def compute_pca(X_train, X_val, n_components=20):
+    """Perform PCA on the training set, transform both training and validation sets, and return the transformed data."
+    
+    Args:
+        X_train (numpy.ndarray): Training features.
+        X_val (numpy.ndarray): Validation features.
+        n_components (int): Number of principal components to keep.
+
+    Returns:
+        tuple: Transformed training and validation sets.
+    """
+    pca = PCA(n_components=n_components)
+    pca.fit(X_train)
+    X_train = pca.transform(X_train)
+    X_val = pca.transform(X_val)
+    return X_train, X_val 
