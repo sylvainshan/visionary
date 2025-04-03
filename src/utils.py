@@ -1,13 +1,16 @@
 ### Utils
 import h5py
 import os
+import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 
 import gdown
-from sklearn.linear_model import LinearRegression, Ridge, RidgeCV, Lasso, ElasticNet, SGDRegressor
+from sklearn.metrics import mean_squared_error, r2_score, explained_variance_score, mean_absolute_error, mean_absolute_percentage_error
 from sklearn.decomposition import PCA
+from scipy.stats import pearsonr
 
 def load_it_data(path_to_data):
     """ Load IT data
@@ -38,7 +41,6 @@ def load_it_data(path_to_data):
     objects_test = [obj_tmp.decode("latin-1") for obj_tmp in objects_test]
 
     return stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val
-
 
 def visualize_img(stimulus,objects,stim_idx):
     """Visualize image given the stimulus and corresponding index and the object name.
@@ -77,20 +79,7 @@ def print_data_info(stimulus_train, spikes_train):
     print('Each stimulus have {} channels (RGB)'.format(n_channels))
     print('The size of the image is {}x{}'.format(img_size,img_size))
 
-def select_model(model_str: str):
-    models = {
-        "linear_regression_cf": LinearRegression(),
-        "ridge_cf": RidgeCV(),
-        "lasso": Lasso(),
-        "elastic_net": ElasticNet(),
-        "sgd_linear": SGDRegressor(l2=100),
-        "sgd_ridge": SGDRegressor(l1=100),
-        "sgd_elastic_net": SGDRegressor(),
-    }
-    
-    return models.get(model_str.lower(), None)
-
-def compute_pca(X_train, X_val, n_components=20):
+def compute_pca(X_train, X_val, n_components=1000):
     """Perform PCA on the training set, transform both training and validation sets, and return the transformed data."
     
     Args:
@@ -101,8 +90,104 @@ def compute_pca(X_train, X_val, n_components=20):
     Returns:
         tuple: Transformed training and validation sets.
     """
+    print("Computing PCA... ", end='', flush=True)
     pca = PCA(n_components=n_components)
-    pca.fit(X_train)
-    X_train = pca.transform(X_train)
+    X_train = pca.fit_transform(X_train)
     X_val = pca.transform(X_val)
+
+    print(f"done.")
     return X_train, X_val 
+
+def get_pca(X_train, X_val, n_components=1000):
+
+    # Define the pickle file path
+    pkl_file = 'out/linear_models/pca_model.pkl'
+
+    # Check if the pickle file exists
+    if os.path.exists(pkl_file):
+        print("PCA Pickle file found, variables loaded.")
+        
+        # Load the PCA model and transformed data from the pickle file
+        with open(pkl_file, 'rb') as f:
+            pca_data = pickle.load(f)
+        
+        # Extract the PCA model and transformed data
+        X_train_pca = pca_data['X_train_pca']
+        X_val_pca = pca_data['X_val_pca']
+
+    else:
+        print("PCA Pickle file does not exist.")
+        
+        # Compute PCA if the pickle file does not exist
+        X_train_pca, X_val_pca = compute_pca(X_train,X_val,n_components)
+        
+        # Save the PCA model and transformed data as a pickle file
+        with open(pkl_file, 'wb') as f:
+            pickle.dump({'X_train_pca': X_train_pca, 'X_val_pca': X_val_pca}, f)
+        
+        print("PCA model and transformed data saved as pickle!")
+
+    return X_train_pca, X_val_pca
+
+def compute_metrics(y_true, y_pred):
+    r2 = r2_score(y_true, y_pred)
+    mse = mean_squared_error(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    mape = mean_absolute_percentage_error(y_true, y_pred)
+    ev = explained_variance_score(y_true, y_pred,multioutput='raw_values')
+    ev_avg= explained_variance_score(y_true, y_pred,multioutput='uniform_average')
+    corr = np.array([pearsonr(y_true[:, i], y_pred[:, i])[0] for i in range(y_true.shape[1])])
+    corr_avg = np.mean(corr)
+    print(f"Scores: R2={r2:.4f}, MSE={mse:.4f}, MAE={mae:.4f}, MAPE={mape:.4f}, Explained-Variance (uniform avg)={ev_avg:.4f}, Correlation PearsonR (avg)={corr_avg:.4f}")
+
+    return r2 ,mse, mae, mape, ev, ev_avg, corr, corr_avg
+
+def plot_neurons_metrics(y_val, y_pred):
+    """
+    Plot the correlation and explained variance for each neuron in a single figure.
+    """
+    correlations = np.array([np.corrcoef(y_val[:, i], y_pred[:, i])[0, 1] for i in range(y_val.shape[1])])
+    explained_variance = np.array([explained_variance_score(y_val[:, i], y_pred[:, i]) for i in range(y_val.shape[1])])
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Correlation Scatter Plot
+    axes[0].scatter(y_val.flatten(), y_pred.flatten(), alpha=0.5)
+    axes[0].plot([-1, 1], [-1, 1], linestyle='--', color='red')  # Diagonal line for slope 1
+    axes[0].set_xlabel("True Neural Activity")
+    axes[0].set_ylabel("Predicted Neural Activity")
+    axes[0].set_title("Correlation of Predicted and True Neural Activity")
+    
+    # Explained Variance Plot
+    axes[1].bar(range(y_val.shape[1]), explained_variance)
+    axes[1].set_xlabel("Neuron Index")
+    axes[1].set_ylabel("Explained Variance")
+    axes[1].set_title("Explained Variance of Predicted Neural Activity")
+    
+    plt.tight_layout()
+    plt.show()
+
+def plot_corr_ev_distribution(r_values, ev_values): 
+    """Plot the distribution of Pearson correlation coefficients and explained variance scores for all neurons.
+
+    Args:
+        r_values (numpy.ndarray): Array of Pearson correlation coefficients for each neuron.
+        ev_values (numpy.ndarray): Array of explained variance scores for each neuron.
+    """
+    fig, ax = plt.subplots(2, 2, sharex='col', gridspec_kw={'height_ratios': [1, 3]}, figsize=(12,6))
+    sns.boxplot(x=r_values, color='skyblue', ax=ax[0,0], linecolor='black', linewidth=1, width=0.5)
+    ax[0, 0].set_xlabel("")
+    ax[0, 0].set_ylabel("")
+    ax[0, 0].set_title("Correlation Coefficient Distribution")
+    sns.histplot(r_values, color='skyblue', ax=ax[1,0])
+    ax[1,0].set_xlabel("Correlation Coefficient")
+    ax[1,0].set_ylabel("Frequency")
+    sns.boxplot(x=ev_values, color='coral', ax=ax[0,1], linecolor='black', linewidth=1, width=0.5)
+    ax[0, 1].set_xlabel("")
+    ax[0, 1].set_ylabel("")
+    ax[0, 1].set_title("Explained Variance Distribution")
+    sns.histplot(ev_values, color='coral', ax=ax[1,1])
+    ax[1,1].set_xlabel("Explained Variance")
+    ax[1,1].set_ylabel("Frequency")
+    plt.tight_layout()
+    plt.show()
