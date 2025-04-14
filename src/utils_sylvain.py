@@ -78,7 +78,7 @@ def evaluate_model(y_pred, y_val):
     return {"mse": mse, "r2": r2, "ev": ev}
 
 
-def compute_pca(X_train, X_val, n_components=20):
+def compute_pca(X_train, X_val, n_components=20, verbose=False):
     """Perform PCA on the training set, transform both training and validation sets, and return the transformed data."
     
     Args:
@@ -93,6 +93,12 @@ def compute_pca(X_train, X_val, n_components=20):
     pca.fit(X_train)
     X_train = pca.transform(X_train)
     X_val = pca.transform(X_val)
+    if verbose:
+        print(f"Explained variance ratio: {pca.explained_variance_ratio_}")
+        print(f"Total explained variance: {np.sum(pca.explained_variance_ratio_)}")
+        print(f"Number of components: {pca.n_components_}")
+        print(f"Original shape: {X_train.shape}")
+        print(f"Reduced shape: {X_train.shape}")
     return X_train, X_val 
 
 

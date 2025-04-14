@@ -13,5 +13,8 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.pyo
-Majaj et al.pdf
 *.npy
+*.pkl
+src/utils_sylvain.py
+/notebooks/sylvainshan
+Majaj et al.pdf
