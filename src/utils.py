@@ -2,10 +2,13 @@
 import h5py
 import os
 import pickle
+import re
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+
+from datetime import datetime
 
 import gdown
 from sklearn.metrics import mean_squared_error, r2_score, explained_variance_score, mean_absolute_error, mean_absolute_percentage_error
@@ -74,10 +77,11 @@ def download_it_data(path_to_data):
 
 def print_data_info(stimulus_train, spikes_train):
     n_stimulus, n_channels, img_size, _ = stimulus_train.shape
-    _, n_neurons = spikes_train.shape
+    n_bins , n_neurons = spikes_train.shape
     print('The train dataset contains {} stimuli and {} IT neurons'.format(n_stimulus,n_neurons))
     print('Each stimulus have {} channels (RGB)'.format(n_channels))
     print('The size of the image is {}x{}'.format(img_size,img_size))
+    print('The number of bins of neuron spiking rate is {}'.format(n_bins))
 
 def compute_pca(X_train, X_val, n_components=1000):
     """Perform PCA on the training set, transform both training and validation sets, and return the transformed data."
@@ -142,6 +146,32 @@ def compute_metrics(y_true, y_pred):
 
     return r2 ,mse, mae, mape, ev, ev_avg, corr, corr_avg
 
+def encode_object_base_labels(objects_train):
+    """
+    Groups object labels by their alphabetic base name (e.g., 'car1', 'car2' → 'car'),
+    then assigns an integer label to each base category.
+    
+    Args:
+        objects_train (list or array): List of object strings like 'car1', 'banana4', 'dog2'
+        
+    Returns:
+        label_dict (dict): Mapping from base name (e.g. 'car') to integer label
+        object_labels (np.array): Array of integer labels corresponding to input
+    """
+    # Extract base names using regex (strip digits from end)
+    base_names = [re.match(r'[a-zA-Z]+', obj).group() for obj in objects_train]
+    
+    # Get sorted unique base names
+    unique_bases = sorted(set(base_names))
+    
+    # Map base name to integer label
+    label_dict = {base: idx for idx, base in enumerate(unique_bases)}
+    
+    # Assign labels
+    object_labels = np.array([label_dict[base] for base in base_names])
+    
+    return label_dict, object_labels
+
 def plot_neurons_metrics(y_val, y_pred):
     """
     Plot the correlation and explained variance for each neuron in a single figure.
@@ -167,7 +197,7 @@ def plot_neurons_metrics(y_val, y_pred):
     plt.tight_layout()
     plt.show()
 
-def plot_corr_ev_distribution(r_values, ev_values): 
+def plot_corr_ev_distribution(r_values, ev_values,fig_name): 
     """Plot the distribution of Pearson correlation coefficients and explained variance scores for all neurons.
 
     Args:
@@ -191,3 +221,11 @@ def plot_corr_ev_distribution(r_values, ev_values):
     ax[1,1].set_ylabel("Frequency")
     plt.tight_layout()
     plt.show()
+
+    # save figure
+    # print datetime in format YYYYMMDDHHMM
+    
+    now = datetime.now()
+    dt_string = now.strftime("%Y%m%d%H%M")
+    fig.savefig(f'out/linear_models/{dt_string}_{fig_name}.png', dpi=300)
+    print(f"Plot saved in : out/linear_models/{dt_string}_{fig_name}.png")
