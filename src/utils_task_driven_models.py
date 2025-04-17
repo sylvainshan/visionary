@@ -110,7 +110,7 @@ def evaluate_resnet(model_type, y_true, layers_of_interest, save_dir, save_dir_p
     return results
 
 
-def evaluate_resnet50(model_type, stimulus_train, spikes_train, n_inputs, batch_size, layers_of_interest, n_components, verbose=False):
+def evaluate_resnet50(model_type, stimulus_train, spikes_train, n_inputs, batch_size, layers_of_interest, n_components, skip_forward_pass=False, verbose=False, data_path='data'):
     """
     Evaluate a ResNet50 model (either pretrained or random) on the provided stimulus and spikes data. 
     This functions does the following
@@ -135,14 +135,14 @@ def evaluate_resnet50(model_type, stimulus_train, spikes_train, n_inputs, batch_
     """
     if model_type == "pretrained":
         model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1).to(device)
-        save_dir = "pretrained_activations"
-        save_dir_pc = "pretrained_pca"
+        save_dir = data_path + "/pretrained_activations"
+        save_dir_pc = data_path + f"/{n_components}pcs/pretrained_pca"
         os.makedirs(save_dir, exist_ok=True)
         os.makedirs(save_dir_pc, exist_ok=True)
     elif model_type == "random":
         model = resnet50(weights=None).to(device)
-        save_dir = "random_activations"
-        save_dir_pc = "random_pca"
+        save_dir = data_path + "/random_activations"
+        save_dir_pc = data_path + f"{n_components}pcs/random_pca"
         os.makedirs(save_dir, exist_ok=True)
         os.makedirs(save_dir_pc, exist_ok=True)
     else: 
@@ -160,7 +160,8 @@ def evaluate_resnet50(model_type, stimulus_train, spikes_train, n_inputs, batch_
         # Convert tensor to numpy and save to disk as a file.
         batch_idx = batch_counters[layer_name]
         file_path = os.path.join(save_dir, f'{layer_name}_batch_{batch_idx}.npy')
-        np.save(file_path, activation.cpu().numpy())
+        if not os.path.exists(file_path): 
+            np.save(file_path, activation.cpu().numpy())
         batch_counters[layer_name] += 1
 
     # Define a hook that saves the activations per batch
@@ -184,10 +185,11 @@ def evaluate_resnet50(model_type, stimulus_train, spikes_train, n_inputs, batch_
     dataloader = DataLoader(dataset, batch_size=batch_size)
 
     # Forward pass to save activations to disk
-    for batch_inputs, _ in tqdm(dataloader, desc="Forward pass"):
-        batch_inputs = batch_inputs.to(device)
-        with torch.no_grad():
-            model(batch_inputs)
+    if skip_forward_pass: 
+        for batch_inputs, _ in tqdm(dataloader, desc="Forward pass"):
+            batch_inputs = batch_inputs.to(device)
+            with torch.no_grad():
+                model(batch_inputs)
 
     # Remove hooks after processing
     for hook in hooks.values():
@@ -294,12 +296,12 @@ def plot_corr_ev_by_neuron(r_values, ev_values):
     plt.show()
 
 
-def plot_layer_comparison(results, save=False, path=None):
+def plot_layer_comparison(results, n_components, save=False, path=None):
     """Compare pretrained vs random distributions for each layer's metrics using boxplots and histograms.
     
     Args:
         results (dict): Nested dictionary containing 'pearson' and 'explained_variance'
-            for 'pretrained' and 'random' models, organized by layer.
+                        for 'pretrained' and 'random' models, organized by layer.
     """
     for layer in results:
         # Create figure with 2x2 grid (2 metrics x 2 plot types)
@@ -360,6 +362,6 @@ def plot_layer_comparison(results, save=False, path=None):
         plt.tight_layout()
 
         if save:
-            plt.savefig(os.path.join(path, f'{layer}_comparison.pdf'), bbox_inches='tight')
+            plt.savefig(os.path.join(path, f'/{n_components}pcs/{layer}_comparison.pdf'), bbox_inches='tight')
 
         plt.show()
