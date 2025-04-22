@@ -29,8 +29,8 @@ X_train_pca, X_val_pca = get_pca(stimulus_train.reshape(stimulus_train.shape[0],
 
 fig_name = 'linearreg_pca_nocv'
 
-use_linearreg = True
-use_ridge = False
+use_linearreg = False
+use_ridge = True
 use_torch = False
 use_pca = True
 use_grid_search = False
@@ -46,15 +46,6 @@ if use_pca:
 else:
     X_train = stimulus_train.reshape(stimulus_train.shape[0], -1)
     X_val = stimulus_val.reshape(stimulus_val.shape[0], -1)
-
-if use_linearreg:
-    
-    # Train best model on full training set
-    start_time = time.time()
-    model = LinearRegression()
-    model.fit(X_train, spikes_train)
-    computation_time = time.time() - start_time
-    print(f"done. Computation time: {computation_time:.4f}")
 
 if use_ridge:
 

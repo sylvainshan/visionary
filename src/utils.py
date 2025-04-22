@@ -3,14 +3,27 @@ import h5py
 import os
 import pickle
 import re
+import csv
+import glob
+import torch
+import gdown
 
-import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
+import matplotlib.pyplot as plt
+
+from tqdm import tqdm
+
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
+
+from torch.utils.data import DataLoader, TensorDataset
+from torchvision.models import resnet50, ResNet50_Weights
 
 from datetime import datetime
 
-import gdown
 from sklearn.metrics import mean_squared_error, r2_score, explained_variance_score, mean_absolute_error, mean_absolute_percentage_error
 from sklearn.decomposition import PCA
 from scipy.stats import pearsonr
@@ -146,6 +159,47 @@ def compute_metrics(y_true, y_pred):
 
     return r2 ,mse, mae, mape, ev, ev_avg, corr, corr_avg
 
+def log_metrics_in_csv(
+    model_name: str,
+    augmented: bool,
+    r2: float,
+    mse: float,
+    mae: float,
+    mape: float,
+    ev_avg: float,
+    corr_avg: float,
+    time_comput=float,
+    out_path: str = "out/metrics_log.csv"
+):
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+    # Prepare log row
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = {
+        "datetime": timestamp,
+        "model": model_name,
+        "augment": int(augmented),
+        "r2": r2,
+        "mse": mse,
+        "mae": mae,
+        "mape": mape,
+        "ev_avg": ev_avg,
+        "corr_avg": corr_avg,
+        "time_comput": time_comput
+    }
+
+    # Check if we need to write headers
+    write_header = not os.path.exists(out_path)
+
+    with open(out_path, mode="a", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=row.keys())
+
+        if write_header:
+            writer.writeheader()
+
+        writer.writerow(row)
+
 def encode_object_base_labels(objects_train):
     """
     Groups object labels by their alphabetic base name (e.g., 'car1', 'car2' → 'car'),
@@ -172,6 +226,7 @@ def encode_object_base_labels(objects_train):
     
     return label_dict, object_labels
 
+# ====== Plots =======
 def plot_neurons_metrics(y_val, y_pred):
     """
     Plot the correlation and explained variance for each neuron in a single figure.
@@ -229,3 +284,73 @@ def plot_corr_ev_distribution(r_values, ev_values,fig_name):
     dt_string = now.strftime("%Y%m%d%H%M")
     fig.savefig(f'out/linear_models/{dt_string}_{fig_name}.png', dpi=300)
     print(f"Plot saved in : out/linear_models/{dt_string}_{fig_name}.png")
+
+def plot_layer_comparison(results, n_components, save=False, path=None):
+    """Compare pretrained vs random distributions for each layer's metrics using boxplots and histograms.
+    
+    Args:
+        results (dict): Nested dictionary containing 'pearson' and 'explained_variance'
+                        for 'pretrained' and 'random' models, organized by layer.
+    """
+    for layer in results:
+        # Create figure with 2x2 grid (2 metrics x 2 plot types)
+        fig, axes = plt.subplots(2, 2, figsize=(14, 8), 
+                                gridspec_kw={'height_ratios': [1, 3]})
+        fig.suptitle(f'{layer} layer', y=1.02, fontsize=20)
+        
+        pearson_pre = results[layer]['pearson']['pretrained']
+        pearson_rand = results[layer]['pearson']['random']
+        ev_pre = results[layer]['explained_variance']['pretrained']
+        ev_rand = results[layer]['explained_variance']['random']
+        
+        df_pearson = pd.DataFrame({
+            'Model': ['Pretrained']*len(pearson_pre) + ['Random']*len(pearson_rand),
+            'Value': np.concatenate([pearson_pre, pearson_rand])
+        })
+        
+        df_ev = pd.DataFrame({
+            'Model': ['Pretrained']*len(ev_pre) + ['Random']*len(ev_rand),
+            'Value': np.concatenate([ev_pre, ev_rand])
+        })
+        
+        mean_marker_props = {
+            'marker': '^',
+            'markerfacecolor': 'white',
+            'markeredgecolor': 'black',
+            'markersize': 8,
+            'markeredgewidth': 1.5,
+        }
+        # Pearson plots
+        sns.boxplot(data=df_pearson, x='Value', y='Model', ax=axes[0,0], orient='h', hue='Model',
+                    palette=['#66b3ff', '#ff9999'], width=0.5, linecolor='black', showmeans=True, meanprops=mean_marker_props)
+        axes[0,0].set_title('Correlation Coefficient Distribution', fontsize=18)
+        axes[0,0].set_xlabel('')
+        axes[0,0].set_ylabel('')
+        axes[0,0].grid(True, alpha=0.3, linestyle='--')
+        
+        sns.histplot(data=df_pearson, x='Value', hue='Model', ax=axes[1,0], 
+                    palette=['#66b3ff', '#ff9999'], alpha=0.5, bins=20)
+        axes[1,0].set_xlabel('Correlation Coefficient', fontsize=18)
+        axes[1,0].set_ylabel('Frequency', fontsize=18)
+        axes[1,0].grid(True, alpha=0.3, linestyle='--')
+        
+        # Explained variance plots
+        sns.boxplot(data=df_ev, x='Value', y='Model', ax=axes[0,1], orient='h', hue='Model',
+                    palette=['#66b3ff', '#ff9999'], width=0.5, linecolor='black', showmeans=True, meanprops=mean_marker_props)
+        axes[0,1].set_title('Explained Variance Distribution', fontsize=18)
+        axes[0,1].set_xlabel('')
+        axes[0,1].set_ylabel('')
+        axes[0,1].grid(True, alpha=0.3, linestyle='--')
+        
+        sns.histplot(data=df_ev, x='Value', hue='Model', ax=axes[1,1], 
+                    palette=['#66b3ff', '#ff9999'], alpha=0.5, bins=20)
+        axes[1,1].set_xlabel('Explained Variance', fontsize=18)
+        axes[1,1].set_ylabel('Frequency', fontsize=18)
+        axes[1,1].grid(True, alpha=0.3, linestyle='--')
+        
+        plt.tight_layout()
+
+        if save:
+            plt.savefig(os.path.join(path, f'/{n_components}pcs/{layer}_comparison.pdf'), bbox_inches='tight')
+
+        plt.show()
