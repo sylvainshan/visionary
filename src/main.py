@@ -75,7 +75,7 @@ def run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objec
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
     log_metrics_in_csv(model_name="linear",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
-    # plot correlatin and explained-variance distribution
+    # plot correlation and explained-variance distribution
     plot_corr_ev_distribution(corr_val, ev_val,fig_name='linear')
 
 def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
@@ -100,7 +100,7 @@ def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, o
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
     log_metrics_in_csv(model_name="linear_pca",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
-    # plot correlatin and explained-variance distribution
+    # plot correlation and explained-variance distribution
     plot_corr_ev_distribution(corr_val, ev_val,fig_name='linear_pca')
 
 def run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
@@ -154,7 +154,7 @@ def run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, ob
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
     log_metrics_in_csv(model_name="ridge_cv5",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
-    # plot correlatin and explained-variance distribution
+    # plot correlation and explained-variance distribution
     plot_corr_ev_distribution(corr_val, ev_val,fig_name='ridge_cv5')
 
 def run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
@@ -208,7 +208,7 @@ def run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
     log_metrics_in_csv(model_name="ridge_pca_cv5",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
-    # plot correlatin and explained-variance distribution
+    # plot correlation and explained-variance distribution
     plot_corr_ev_distribution(corr_val, ev_val,fig_name='ridge_pca_cv5')
     
 def run_elasticnet_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
@@ -305,15 +305,13 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
 
     # Set model to evaluation mode
     model.eval()
-    #if verbose: 
-    #    print(model)
 
     # Track how many batches are saved per layer
     batch_counters = {layer: 0 for layer in layers_of_interest}
 
     # ===== Set hooks ===================================================================================
     # Save activations
-    def save_activation(layer_name, activation,data_type):
+    def save_activation(layer_name, activation, data_type):
         # Convert tensor to numpy and save to disk as a file.
         batch_idx = batch_counters[layer_name]
         file_path = os.path.join(save_dir, f'{layer_name}_{data_type}_batch_{batch_idx}.npy')
@@ -355,7 +353,7 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
             hook.remove()
 
         #  ===== Apply PCA on saved activations of trained dataset for each layer ==============================================
-        if data_type == 'trainss':
+        if data_type == 'train':
             print("Compute PCA on each layer...")
             for layer_name in layers_of_interest:
                 files = glob.glob(os.path.join(save_dir, f'{layer_name}_{data_type}_batch_*.npy'))
@@ -435,24 +433,24 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
 
         # Train best model on full training set
         start_time = time.time()
-        model = Ridge(alpha=grid.best_params_['alpha'])
-        model.fit(X_train, spikes_train)
+        ridge_model = Ridge(alpha=grid.best_params_['alpha'])
+        ridge_model.fit(X_train, spikes_train)
         computation_time = time.time() - start_time
         print(f"done. Computation time: {computation_time:.4f}")
 
         # Evaluate on validation set (optional)
-        spikes_val_pred = model.predict(X_val)
-        spikes_train_pred = model.predict(X_train)
+        spikes_val_pred = ridge_model.predict(X_val)
+        spikes_train_pred = ridge_model.predict(X_train)
         val_mse = mean_squared_error(spikes_val, spikes_val_pred)
         print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
 
         # Compute metrics for training and validation set
         (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_train, spikes_train_pred)
         (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
-        log_metrics_in_csv(model_name=f'task_driven_{model_type}_{layer_name}',augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
+        log_metrics_in_csv(model_name=f'task_driven_{model_type}_{layer_name}', augmented=augmented, r2=r2_val, mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
-        # plot correlatin and explained-variance distribution
-        plot_corr_ev_distribution(corr_val, ev_val,fig_name=f'task_driven_{model_type}_{layer_name}')
+        # plot correlation and explained-variance distribution
+        plot_corr_ev_distribution(corr_val, ev_val, fig_name=f'task_driven_{model_type}_{layer_name}')
 
 def run_task_driven_pretrained(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
