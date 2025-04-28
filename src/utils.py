@@ -115,10 +115,10 @@ def compute_pca(X_train, X_val, n_components=1000):
     print(f"done.")
     return X_train, X_val 
 
-def get_pca(X_train, X_val, n_components=1000):
+def get_pca(X_train, X_val, n_components=1000, model_type='linear_model'):
 
     # Define the pickle file path
-    pkl_file = 'out/linear_models/pca_model.pkl'
+    pkl_file = f'out/linear_models/pca_{model_type}_{n_components}pcs.pkl'
 
     # Check if the pickle file exists
     if os.path.exists(pkl_file):

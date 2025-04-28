@@ -80,7 +80,7 @@ def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, o
     print("Running Linear Regression with PCA...")
 
     # Compute PCA
-    X_train, X_val = get_pca(stimulus_train.reshape(stimulus_train.shape[0], -1), stimulus_val.reshape(stimulus_val.shape[0], -1), n_components=1000)
+    X_train, X_val = get_pca(stimulus_train.reshape(stimulus_train.shape[0], -1), stimulus_val.reshape(stimulus_val.shape[0], -1), n_components=1000, model_type='linear_model')
 
     # Train model on full training set
     start_time = time.time()
@@ -159,7 +159,7 @@ def run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train
     print("Running Ridge Regression with PCA and 5-fold CV...")
 
     # Compute PCA
-    X_train, X_val = get_pca(stimulus_train.reshape(stimulus_train.shape[0], -1), stimulus_val.reshape(stimulus_val.shape[0], -1), n_components=1000)
+    X_train, X_val = get_pca(stimulus_train.reshape(stimulus_train.shape[0], -1), stimulus_val.reshape(stimulus_val.shape[0], -1), n_components=1000, model_type='ridge_model')
 
     # Ridge regression setup
     alphas = np.logspace(5, 6, 10)
@@ -217,7 +217,8 @@ def run_elasticnet_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_
     X_train, X_val = get_pca(
         stimulus_train.reshape(stimulus_train.shape[0], -1),
         stimulus_val.reshape(stimulus_val.shape[0], -1),
-        n_components=1000
+        n_components=1000,
+        model_type='elasticnet_model'
     )
 
     # Elastic Net setup
