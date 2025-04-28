@@ -10,8 +10,6 @@ from sklearn.linear_model import LinearRegression, Ridge, ElasticNet
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
 from sklearn.decomposition import IncrementalPCA
 
-
-
 from utils import *
 
 # === Utils ===
@@ -76,7 +74,7 @@ def run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objec
     log_metrics_in_csv(model_name="linear",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
-    plot_corr_ev_distribution(corr_val, ev_val,fig_name='linear')
+    plot_corr_ev_distribution(corr_val, ev_val, fig_name='linear')
 
 def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running Linear Regression with PCA...")
@@ -101,7 +99,7 @@ def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, o
     log_metrics_in_csv(model_name="linear_pca",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
-    plot_corr_ev_distribution(corr_val, ev_val,fig_name='linear_pca')
+    plot_corr_ev_distribution(corr_val, ev_val, fig_name='linear_pca')
 
 def run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running Ridge Regression with 5-fold CV...")
@@ -286,7 +284,10 @@ def run_elasticnet_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_
 
 # PART 1b   
 def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented,model_type,verbose=True):
-    print(f"Running Task-driven model ({model_type} weights) using {augmented} dataset...")
+    if augmented: 
+        print(f"Running Task-driven model ({model_type} weights) using the augmented dataset...")
+    else:
+        print(f"Running Task-driven model ({model_type} weights) using the original dataset...")
     
     # === Parameters ====
     DATA_PATH =f'data/task_driven_models'
@@ -305,6 +306,8 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
 
     # Set model to evaluation mode
     model.eval()
+    #if verbose: 
+    #    print(model)
 
     # Track how many batches are saved per layer
     batch_counters = {layer: 0 for layer in layers_of_interest}
@@ -447,7 +450,7 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
         # Compute metrics for training and validation set
         (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_train, spikes_train_pred)
         (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
-        log_metrics_in_csv(model_name=f'task_driven_{model_type}_{layer_name}', augmented=augmented, r2=r2_val, mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
+        log_metrics_in_csv(model_name=f'task_driven_{model_type}_{layer_name}', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
 
         # plot correlation and explained-variance distribution
         plot_corr_ev_distribution(corr_val, ev_val, fig_name=f'task_driven_{model_type}_{layer_name}')
@@ -460,7 +463,7 @@ def run_task_driven_pretrained(stimulus_train, stimulus_val, stimulus_test, obje
 def run_task_driven_random(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = resnet50(weights=None).to(device)
-    run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented,model_type='random')
+    run_task_driven(model, device, stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val, augmented,model_type='random')
 
 # PART 2
 def run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):

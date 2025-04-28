@@ -37,7 +37,6 @@ def load_it_data(path_to_data):
     Returns:
         np.array (x6): Stimulus train/val/test; objects list train/val/test; spikes train/val
     """
-
     datafile = h5py.File(os.path.join(path_to_data,'IT_data.h5'), 'r')
 
     stimulus_train = datafile['stimulus_train'][()]
@@ -81,6 +80,7 @@ def visualize_img(stimulus,objects,stim_idx):
     return
 
 def download_it_data(path_to_data):
+    os.makedirs(path_to_data, exist_ok=True)
     output = os.path.join(path_to_data,"IT_data.h5")
     if not os.path.exists(output):
         url = "https://drive.google.com/file/d/1s6caFNRpyR9m7ZM6XEv_e8mcXT3_PnHS/view?usp=share_link"
@@ -252,7 +252,7 @@ def plot_neurons_metrics(y_val, y_pred):
     plt.tight_layout()
     plt.show()
 
-def plot_corr_ev_distribution(r_values, ev_values,fig_name): 
+def plot_corr_ev_distribution(r_values, ev_values, fig_name): 
     """Plot the distribution of Pearson correlation coefficients and explained variance scores for all neurons.
 
     Args:
@@ -279,11 +279,27 @@ def plot_corr_ev_distribution(r_values, ev_values,fig_name):
 
     # save figure
     # print datetime in format YYYYMMDDHHMM
-    
     now = datetime.now()
     dt_string = now.strftime("%Y%m%d%H%M")
-    fig.savefig(f'out/linear_models/{dt_string}_{fig_name}.png', dpi=300)
-    print(f"Plot saved in : out/linear_models/{dt_string}_{fig_name}.png")
+
+    base_dir = 'out'
+    os.makedirs(base_dir, exist_ok=True)
+
+    # Determine the save directory based on the figure name
+    if 'task_driven' in fig_name:
+        save_dir = os.path.join(base_dir, 'task_driven_models')
+    elif 'data_driven' in fig_name:
+        save_dir = os.path.join(base_dir, 'data_driven_models')
+    else:
+        save_dir = os.path.join(base_dir, 'linear_models')
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    for ext in ['.pdf', '.png']:
+        save_path = os.path.join(save_dir, f'{dt_string}_{fig_name}{ext}')
+        fig.savefig(save_path, bbox_inches='tight', dpi=300 if ext == '.png' else None)
+    
+    print(f"Plots saved in: {save_dir}")
 
 def plot_layer_comparison(results, n_components, save=False, path=None):
     """Compare pretrained vs random distributions for each layer's metrics using boxplots and histograms.
