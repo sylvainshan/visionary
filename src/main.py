@@ -360,23 +360,30 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
         if data_type == 'train':
             print("Compute PCA on each layer...")
             for layer_name in layers_of_interest:
-                files = glob.glob(os.path.join(save_dir, f'{layer_name}_{data_type}_batch_*.npy'))
-                
-                all_activations = []
-                for file in tqdm(files, desc=f"Loading {layer_name} {data_type} activations"):
-                    acts = np.load(file)
-                    all_activations.append(acts.reshape(acts.shape[0], -1))
-                layer_activations = np.concatenate(all_activations, axis=0)
-
-                # Fit PCA and save the PCA model
-                pca = PCA(n_components=N_PCA)
-                pca.fit(layer_activations)
                 pca_model_path = os.path.join(save_dir_pc, f'{layer_name}_{data_type}_pca_model.pkl')
-                with open(pca_model_path, 'wb') as f:
-                    pickle.dump(pca, f)
                 
-                if verbose:
-                    print(f'PCA for {layer_name} {data_type} computed with shape: {pca.components_.shape}\n')
+                # Check if PCA model already exists
+                if os.path.exists(pca_model_path):
+                    if verbose:
+                        print(f'PCA model for {layer_name} {data_type} already exists. Skipping computation.\n')
+                else:
+                    # Compute PCA only if the model doesn't exist
+                    files = glob.glob(os.path.join(save_dir, f'{layer_name}_{data_type}_batch_*.npy'))
+                    
+                    all_activations = []
+                    for file in tqdm(files, desc=f"Loading {layer_name} {data_type} activations"):
+                        acts = np.load(file)
+                        all_activations.append(acts.reshape(acts.shape[0], -1))
+                    layer_activations = np.concatenate(all_activations, axis=0)
+
+                    # Fit PCA and save the PCA model
+                    pca = PCA(n_components=N_PCA)
+                    pca.fit(layer_activations)
+                    with open(pca_model_path, 'wb') as f:
+                        pickle.dump(pca, f)
+                    
+                    if verbose:
+                        print(f'PCA for {layer_name} {data_type} computed with shape: {pca.components_.shape}\n')
         
     # ======== Evaluate the taks-driven model using the PCA-reduced representations ======== 
     print("Apply PCs to activations and fit a linear Ridge regression model to predict brain activity")
