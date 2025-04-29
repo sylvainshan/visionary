@@ -456,12 +456,14 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
         print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
 
         # Compute metrics for training and validation set
-        (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_train, spikes_train_pred)
+        (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred)
         (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
-        log_metrics_in_csv(model_name=f'task_driven_{model_type}_{layer_name}', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
-
-        # plot correlation and explained-variance distribution
-        plot_corr_ev_distribution(corr_val, ev_val, fig_name=f'task_driven_{model_type}_{layer_name}')
+        log_metrics_in_csv(model_name=f'task_driven_val_{model_type}_{layer_name}', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+        log_metrics_in_csv(model_name=f'task_driven_train_{model_type}_{layer_name}', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
+       
+       # plot correlation and explained-variance distribution
+        plot_corr_ev_distribution(corr_val, ev_val, fig_name=f'task_driven_val_{model_type}_{layer_name}')
+        plot_corr_ev_distribution(corr_train, ev_train, fig_name=f'task_driven_train_{model_type}_{layer_name}')
 
 def run_task_driven_pretrained(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
