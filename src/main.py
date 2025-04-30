@@ -285,16 +285,12 @@ def run_elasticnet_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_
 
 # PART 1b   
 def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented,model_type,verbose=True):
-    if augmented: 
-        print(f"Running Task-driven model ({model_type} weights) using the augmented dataset...")
-    else:
-        print(f"Running Task-driven model ({model_type} weights) using the original dataset...")
+    print(f"=== Running Task-driven model ({model_type} weights) using {'augmented' if augmented else 'original'} dataset ===")
     
     # === Parameters ====
     DATA_PATH =f'data/task_driven_models'
     BATCH_SIZE = 100
     N_PCA = 1000
-    N_INPUTS = len(stimulus_train)
     # ===================
 
     layers_of_interest = ['conv1', 'layer1', 'layer2', 'layer3', 'layer4', 'avgpool']
@@ -355,10 +351,11 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
             _ = model(batch_x)
         for hook in hooks.values():
             hook.remove()
-
+        print("Activations of each layer saved in .npy files in: pretrained_activations/*layer*_*datatype*_batch_*ID*.npy")
+                
         #  ===== Apply PCA on saved activations of trained dataset for each layer ==============================================
         if data_type == 'train':
-            print("Compute PCA on each layer...")
+            print(f"Compute PCA using {N_PCA} PCs on each layer activation weights...")
             for layer_name in layers_of_interest:
                 pca_model_path = os.path.join(save_dir_pc, f'{layer_name}_{data_type}_pca_model.pkl')
                 
@@ -415,7 +412,7 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
         # ======= Ridge regression setup ======= 
         print("Linear Regression using Ridge (grid search on alpha)")
         alphas = np.logspace(2,10, 9)
-        ridge = Ridge()
+        ridge = Ridge(max_iter=1000,fit_intercept=True,random_state=42)
 
         # Stratified K-Fold using class labels
         skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -444,7 +441,7 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
 
         # Train best model on full training set
         start_time = time.time()
-        ridge_model = Ridge(alpha=grid.best_params_['alpha'])
+        ridge_model = Ridge(alpha=grid.best_params_['alpha'],max_iter=1000,fit_intercept=True,random_state=42)
         ridge_model.fit(X_train, spikes_train)
         computation_time = time.time() - start_time
         print(f"done. Computation time: {computation_time:.4f}")

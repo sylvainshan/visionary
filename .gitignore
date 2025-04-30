@@ -4,6 +4,7 @@ figures/
 out/
 notebooks/IT_data.h5
 notebooks/
+src/main_gomar.py
 
 # Ignore system files
 .DS_Store
