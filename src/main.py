@@ -2,52 +2,21 @@ import argparse
 import time
 import torch
 import pickle
-import random
-import gc
 import numpy as np
 
-from sklearn.linear_model import LinearRegression, Ridge, ElasticNet
+from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.model_selection import GridSearchCV, StratifiedKFold
-from sklearn.decomposition import IncrementalPCA
 
-from utils import *
+import torch.utils.data as data
+from torchvision.models.feature_extraction import create_feature_extractor
+from torch.utils.data import DataLoader, TensorDataset, Dataset
+
+from utils_gomar2 import *
 
 # === Utils ===
 # to add here for submission
 
-def seed_everything(seed=42):
-    """
-    Set random seeds for reproducibility.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-def get_data(augmented: bool):
-    # Download and load IT data
-    path_to_data = 'data'
-    download_it_data(path_to_data)
-    
-    if augmented:
-        stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = augment_data()
-    else:
-        stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = load_it_data(path_to_data)
-
-    # List unique training objects
-    unique = list(set(objects_train))
-    print("Unique objects in training set:", unique)
-    print("Number of unique objects:", len(unique))
-
-    # Print data info
-    print_data_info(stimulus_train, spikes_train)
-
-    return stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val
-
-def augment_data():
-    print("Use augmented data input")
-    
-# === Model Function Definitions ===
+# === Run Model Function Definitions ===
 
 # PART 1a
 def run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
@@ -74,7 +43,14 @@ def run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objec
     log_metrics_in_csv(model_name="linear",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
-    plot_corr_ev_distribution(corr_val, ev_val, fig_name='linear')
+    plot_corr_ev_distribution(corr_val, ev_val, 'linear')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'linear', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'linear')
 
 def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running Linear Regression with PCA...")
@@ -99,7 +75,14 @@ def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, o
     log_metrics_in_csv(model_name="linear_pca",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
-    plot_corr_ev_distribution(corr_val, ev_val, fig_name='linear_pca')
+    plot_corr_ev_distribution(corr_val, ev_val, 'linear_pca')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'linear_pca', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'linear_pca')
 
 def run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running Ridge Regression with 5-fold CV...")
@@ -153,16 +136,30 @@ def run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, ob
     log_metrics_in_csv(model_name="ridge_cv5",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
-    plot_corr_ev_distribution(corr_val, ev_val,fig_name='ridge_cv5')
+    plot_corr_ev_distribution(corr_val, ev_val,'ridge_cv5')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'ridge_cv5', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'ridge_cv5')
 
 def run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running Ridge Regression with PCA and 5-fold CV...")
 
+    # Normalize data
+    """ scaler = StandardScaler()
+    stimulus_train = scaler.fit_transform(stimulus_train.reshape(stimulus_train.shape[0], -1))
+    stimulus_val = scaler.transform(stimulus_val.reshape(stimulus_val.shape[0], -1))
+    stimulus_test = scaler.transform(stimulus_test.reshape(stimulus_test.shape[0], -1)) """
     # Compute PCA
-    X_train, X_val = get_pca(stimulus_train.reshape(stimulus_train.shape[0], -1), stimulus_val.reshape(stimulus_val.shape[0], -1), n_components=1000, model_type='ridge_model')
+    X_train, X_val = get_pca(stimulus_train.reshape(stimulus_train.shape[0], -1), 
+                             stimulus_val.reshape(stimulus_val.shape[0], -1), 
+                             n_components=1000, model_type='ridge_model')
 
     # Ridge regression setup
-    alphas = np.logspace(5, 6, 10)
+    alphas = np.logspace(5,6,10)
     ridge = Ridge()
 
     # Stratified K-Fold using class labels
@@ -199,89 +196,29 @@ def run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train
 
     # Evaluate on validation set (optional)
     spikes_val_pred = model.predict(X_val)
+    spikes_train_pred = model.predict(X_train)
     val_mse = mean_squared_error(spikes_val, spikes_val_pred)
     print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
 
     # Compute metrics for training and validation set
-    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
     log_metrics_in_csv(model_name="ridge_pca_cv5",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
-    # plot correlation and explained-variance distribution
-    plot_corr_ev_distribution(corr_val, ev_val,fig_name='ridge_pca_cv5')
+    # Compute metrics for training and validation set
+    (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred,'train')
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name='ridge_pca_cv5', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+    log_metrics_in_csv(model_name='ridge_pca_cv5', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
     
-def run_elasticnet_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val,'ridge_pca_cv5')
 
-    print("Running Elastic Net Regression with PCA and 5-fold CV...")
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'ridge_pca_cv5', metric='correlation')
 
-    # Compute PCA
-    X_train, X_val = get_pca(
-        stimulus_train.reshape(stimulus_train.shape[0], -1),
-        stimulus_val.reshape(stimulus_val.shape[0], -1),
-        n_components=1000,
-        model_type='elasticnet_model'
-    )
-
-    # Elastic Net setup
-    alphas = np.linspace(160, 200, 10)  # Regularization strength
-    l1_ratios = np.logspace(-10, -8, 10)  # Mix between L1 (Lasso) and L2 (Ridge)
-
-    elastic_net = ElasticNet()
-
-    # Stratified K-Fold using class labels
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
-    # Grid search with stratified CV
-    grid = GridSearchCV(
-        estimator=elastic_net,
-        param_grid={
-            'alpha': alphas,
-            'l1_ratio': l1_ratios
-        },
-        scoring='neg_mean_squared_error',
-        cv=skf.split(X_train, objects_train),
-        n_jobs=-1,
-        verbose=1
-    )
-
-    # Fit grid search
-    start_time = time.time()
-    grid.fit(X_train, spikes_train)
-    computation_time = time.time() - start_time
-    print(f"Grid Search Computation time: {computation_time:.4f}")
-
-    # Best model and parameter
-    best_params = grid.best_params_
-    print(f"\nBest parameters: alpha={best_params['alpha']}, l1_ratio={best_params['l1_ratio']}")
-    print(f"Best CV MSE: {-grid.best_score_:.4f}")
-
-    # Train best model on full training set
-    model = ElasticNet(alpha=best_params['alpha'], l1_ratio=best_params['l1_ratio'])
-    start_time = time.time()
-    model.fit(X_train, spikes_train)
-    computation_time = time.time() - start_time
-    print(f"Done. Training time: {computation_time:.4f}")
-
-    # Evaluate on validation set
-    spikes_val_pred = model.predict(X_val)
-    val_mse = mean_squared_error(spikes_val, spikes_val_pred)
-    print(f"Validation MSE with best Elastic Net model: {val_mse:.4f}")
-
-    # Compute and log metrics
-    r2, mse, mae, mape, ev_val, ev_avg, corr_val, corr_avg = compute_metrics(spikes_val, spikes_val_pred)
-    log_metrics_in_csv(
-        model_name="elasticnet_pca_cv5",
-        augmented=augmented,
-        r2=r2,
-        mse=mse,
-        mae=mae,
-        mape=mape,
-        ev_avg=ev_avg,
-        corr_avg=corr_avg,
-        time_comput=computation_time
-    )
-
-    # Plot correlation and EV distributions
-    plot_corr_ev_distribution(corr_val, ev_val, fig_name='elasticnet_pca_cv5')
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'ridge_pca_cv5')
 
 # PART 1b   
 def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented,model_type,verbose=True):
@@ -299,119 +236,70 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
     save_dir = os.path.join(DATA_PATH,f"{model_type}_activations")
     save_dir_pc =  os.path.join(DATA_PATH,f"{N_PCA}pcs",f"{model_type}_pca")
     os.makedirs(save_dir, exist_ok=True)
-    os.makedirs(save_dir_pc, exist_ok=True)
 
-    # Set model to evaluation mode
-    model.eval()
-    #if verbose: 
-    #    print(model)
+    # Set up feature extractor
+    feature_extractor = create_feature_extractor(model, return_nodes={layer: layer for layer in layers_of_interest}).to(device)
+    feature_extractor.eval()
 
-    # Track how many batches are saved per layer
-    batch_counters = {layer: 0 for layer in layers_of_interest}
-
-    # ===== Set hooks ===================================================================================
-    # Save activations
-    def save_activation(layer_name, activation, data_type):
-        # Convert tensor to numpy and save to disk as a file.
-        batch_idx = batch_counters[layer_name]
-        file_path = os.path.join(save_dir, f'{layer_name}_{data_type}_batch_{batch_idx}.npy')
-        if not os.path.exists(file_path): 
-            np.save(file_path, activation.cpu().numpy())
-        batch_counters[layer_name] += 1
-
-    # Hook generator to capture and save activations during forward pass
-    def get_activation_saver(layer_name, data_type):
-        def hook(module, input, output):
-            # Reshape activations to [batch_size, -1]
-            acts = output.detach().view(output.size(0), -1) # [batch_size, features]
-            save_activation(layer_name, acts, data_type)
-        return hook
-    
-    def register_hooks(model, data_type):
-        hooks = {}
-        for layer_name in layers_of_interest:
-            layer = modules[layer_name]
-            hooks[layer_name] = layer.register_forward_hook(get_activation_saver(layer_name, data_type))
-        return hooks
-
-    # ===== Prepare Dataloader - Run data through model to trigger hooks and save activations =========================
-    modules = dict(model.named_modules())  # define this once at the top
-
-    # Iterate Train and Validation dataset
-    for data_type, stimulus, spikes in zip(['train','val'],[stimulus_train,stimulus_val],[spikes_train,spikes_val]):
-
-        # Prepare data loader
+    # === Collect activations ===
+    def collect_activations(loader):
+        activations = []
+        for batch_x, _ in tqdm(loader, desc=f"Extracting {layer_name}"):
+            with torch.no_grad():
+                features = feature_extractor(batch_x)[layer_name]
+                activations.append(features.view(features.size(0), -1).cpu().numpy())
+        return np.concatenate(activations, axis=0)
+    # === Prepare data loaders ===
+    def get_dataloader(stimulus, spikes):
         inputs = torch.tensor(stimulus).to(device)
         outputs = torch.tensor(spikes).to(device)
         dataset = TensorDataset(inputs, outputs)
-        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE)
-        
-        hooks = register_hooks(model, data_type)
-        for batch_x, _ in dataloader:
-            _ = model(batch_x)
-        for hook in hooks.values():
-            hook.remove()
-        print("Activations of each layer saved in .npy files in: pretrained_activations/*layer*_*datatype*_batch_*ID*.npy")
-                
-        #  ===== Apply PCA on saved activations of trained dataset for each layer ==============================================
-        if data_type == 'train':
-            print(f"Compute PCA using {N_PCA} PCs on each layer activation weights...")
-            for layer_name in layers_of_interest:
-                pca_model_path = os.path.join(save_dir_pc, f'{layer_name}_{data_type}_pca_model.pkl')
-                
-                # Check if PCA model already exists
-                if os.path.exists(pca_model_path):
-                    if verbose:
-                        print(f'PCA model for {layer_name} {data_type} already exists. Skipping computation.\n')
-                else:
-                    # Compute PCA only if the model doesn't exist
-                    files = glob.glob(os.path.join(save_dir, f'{layer_name}_{data_type}_batch_*.npy'))
-                    
-                    all_activations = []
-                    for file in tqdm(files, desc=f"Loading {layer_name} {data_type} activations"):
-                        acts = np.load(file)
-                        all_activations.append(acts.reshape(acts.shape[0], -1))
-                    layer_activations = np.concatenate(all_activations, axis=0)
+        return DataLoader(dataset, batch_size=BATCH_SIZE)
+    # =======================================================================================
+    
+    train_loader = get_dataloader(stimulus_train, spikes_train)
+    val_loader = get_dataloader(stimulus_val, spikes_val)
 
-                    # Fit PCA and save the PCA model
-                    pca = PCA(n_components=N_PCA)
-                    pca.fit(layer_activations)
-                    with open(pca_model_path, 'wb') as f:
-                        pickle.dump(pca, f)
-                    
-                    if verbose:
-                        print(f'PCA for {layer_name} {data_type} computed with shape: {pca.components_.shape}\n')
-        
+    compute_pcs = False
+    if compute_pcs:
+        # === Extract activations and apply PCA ===
+        for layer_name in layers_of_interest:
+            print(f"\nProcessing layer: {layer_name} ===")
+
+            X_train_acts = collect_activations(train_loader)
+            X_val_acts = collect_activations(val_loader)
+
+            # === PCA ===
+            print("Fitting PCA on train activations...")
+            pca = PCA(n_components=N_PCA)
+            X_train_pcs = pca.fit_transform(X_train_acts)
+            X_val_pcs = pca.transform(X_val_acts)
+
+            # === Save PCA model and PCs ===
+            pca_path = os.path.join(save_dir_pc, f'{layer_name}_pca_model.pkl')
+            with open(pca_path, 'wb') as f:
+                pickle.dump(pca, f)
+
+            np.save(os.path.join(save_dir_pc, f'{layer_name}_train_pcs.npy'), X_train_pcs)
+            np.save(os.path.join(save_dir_pc, f'{layer_name}_val_pcs.npy'), X_val_pcs)
+
+            print(f"Saved PCA model and PCs for {layer_name}")
+
+    
     # ======== Evaluate the taks-driven model using the PCA-reduced representations ======== 
     print("Apply PCs to activations and fit a linear Ridge regression model to predict brain activity")
+
     for layer_name in layers_of_interest:
-        print(f"\nPredict: {layer_name}\n===============")
-        # Load PCA model for both train and validation dataset
-        pca_path = os.path.join(save_dir_pc, f'{layer_name}_train_pca_model.pkl')
-        with open(pca_path, 'rb') as f:
-            pca = pickle.load(f)
-        
-        # ======= Load activations and transform to PCs ======= 
-        print("Loading activations and fit the PCs")
-        # for train dataset
-        train_activation_files = glob.glob(os.path.join(save_dir, f'{layer_name}_train_batch_*.npy'))
-        X_activation_train = np.concatenate([np.load(f) for f in train_activation_files], axis=0)
-        print("Train set (sample,activation layer features): ",X_activation_train.shape)
-        X_train = pca.transform(X_activation_train)
-        print("Train set (sample, PCs): ",X_train.shape)
-        del train_activation_files, X_activation_train
-        
-        # for val dataset
-        val_activation_files = glob.glob(os.path.join(save_dir, f'{layer_name}_val_batch_*.npy'))
-        X_activation_val = np.concatenate([np.load(f) for f in val_activation_files], axis=0)
-        print("Validation set (sample, activation layer features): ",X_activation_val.shape)
-        X_val = pca.transform(X_activation_val)
-        print("Validation set (sample, PCs): ",X_val.shape)
-        del val_activation_files, X_activation_val
+
+        # Load precomputed PCs
+        X_train = np.load(os.path.join(save_dir_pc, f'{layer_name}_train_pcs.npy'))
+        X_val = np.load(os.path.join(save_dir_pc, f'{layer_name}_val_pcs.npy'))
+
 
         # ======= Ridge regression setup ======= 
-        print("Linear Regression using Ridge (grid search on alpha)")
-        alphas = np.logspace(2,10, 9)
+        print(f"\n{layer_name}\n===============")
+        #print(f"{layer_name} Linear Regression using Ridge (grid search on alpha)")
+        alphas = np.logspace(-3,6, 100)
         ridge = Ridge(max_iter=1000,fit_intercept=True,random_state=42)
 
         # Stratified K-Fold using class labels
@@ -424,7 +312,7 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
             scoring='neg_mean_squared_error',
             cv=skf.split(X_train, objects_train),
             n_jobs=-1,
-            verbose=1
+            verbose=0
         )
 
         # Fit grid search
@@ -433,34 +321,41 @@ def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, ob
         grid.fit(X_train, spikes_train)
 
         computation_time = time.time() - start_time
-        print(f"Grid Search Computation time: {computation_time:.4f}")
+        #print(f"Grid Search Computation time: {computation_time:.4f}")
         
         # Best model and parameter
         print(f"Best alpha: {grid.best_params_['alpha']}")
-        print(f"Best CV MSE: {-grid.best_score_:.4f}")
+        #print(f"Best CV MSE: {-grid.best_score_:.4f}")
 
         # Train best model on full training set
         start_time = time.time()
         ridge_model = Ridge(alpha=grid.best_params_['alpha'],max_iter=1000,fit_intercept=True,random_state=42)
         ridge_model.fit(X_train, spikes_train)
         computation_time = time.time() - start_time
-        print(f"done. Computation time: {computation_time:.4f}")
+        #print(f"done. Computation time: {computation_time:.4f}")
 
         # Evaluate on validation set (optional)
         spikes_val_pred = ridge_model.predict(X_val)
         spikes_train_pred = ridge_model.predict(X_train)
         val_mse = mean_squared_error(spikes_val, spikes_val_pred)
-        print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
+        #print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
 
         # Compute metrics for training and validation set
-        (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred)
-        (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
+        (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred,'train')
+        (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
         log_metrics_in_csv(model_name=f'task_driven_val_{model_type}_{layer_name}', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
         log_metrics_in_csv(model_name=f'task_driven_train_{model_type}_{layer_name}', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
        
        # plot correlation and explained-variance distribution
-        plot_corr_ev_distribution(corr_val, ev_val, fig_name=f'task_driven_val_{model_type}_{layer_name}')
-        plot_corr_ev_distribution(corr_train, ev_train, fig_name=f'task_driven_train_{model_type}_{layer_name}')
+        plot_corr_ev_distribution(corr_val, ev_val, f'task_driven_{model_type}_{layer_name}')
+
+        # plot dissimilarity matrix on validation set
+        plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, f'task_driven_{model_type}_{layer_name}', metric='correlation')
+
+        # plot neuron site brain activity prediction
+        #for site in [23,39,42,56,71,95,107,132,139,152]:
+        for site in [39,107,152]:
+            plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, f'task_driven_{model_type}_{layer_name}')
 
 def run_task_driven_pretrained(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -476,12 +371,60 @@ def run_task_driven_random(stimulus_train, stimulus_val, stimulus_test, objects_
 def run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running Data-driven model...")
 
+    data_path = 'data'
+    stim_train, stim_val, *_ , spikes_train, spikes_val = load_it_data(data_path)
+    _, _, H, _ = stim_train.shape
+    _, n_neurons = spikes_train.shape
+
+    train_ds = ITDataset(stim_train, spikes_train)
+    val_ds   = ITDataset(stim_val,   spikes_val)
+    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
+    val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=True)
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = ShallowCNN(n_neurons).to(device)
+
+    start_time = time.time()
+    print("Training model...")
+    model, metrics = train_model(model, train_loader, val_loader, device,
+                                 num_epochs=40, learning_rate=1e-3)
+    computation_time = time.time() - start_time
+    spikes_val_pred, targs = evaluate_model(model, val_loader, device)
+    spikes_train_pred, targs = evaluate_model(model, train_loader, device)
+    #save_training_plots(metrics)
+
+    # Compute metrics for training and validation set
+    (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred,'train')
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name='data_driven_shallow_cnn', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+    log_metrics_in_csv(model_name='data_driven_shallow_cnn', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
+    
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val,'data_driven_shallow_cnn')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'data_driven_shallow_cnn', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'data_driven_shallow_cnn')
+
 # PART 3
 def run_best(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running Best model (as selected by validation performance)...")
 
 def run_all(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running All models... ")
+
+    augmented = False
+    run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_task_driven_pretrained(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_task_driven_random(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+
 
 # === Parser Setup ===
 def parse_args():
@@ -494,7 +437,6 @@ def parse_args():
             "linear_pca",
             "ridge_cv5",
             "ridge_pca_cv5",
-            "enet_pca_cv5",
             "task_driven_pretrained",
             "task_driven_random",
             "data_driven",
@@ -541,7 +483,6 @@ if __name__ == "__main__":
         "linear_pca": run_linear_pca,
         "ridge_cv5": run_ridge_cv5,
         "ridge_pca_cv5": run_ridge_pca_cv5,
-        "enet_pca_cv5": run_elasticnet_pca_cv5,
         "task_driven_pretrained": run_task_driven_pretrained,
         "task_driven_random": run_task_driven_random,
         "data_driven": run_data_driven,
