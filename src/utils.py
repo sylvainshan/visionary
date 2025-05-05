@@ -84,9 +84,10 @@ def get_pca(X_train, X_val, n_components, model_type='linear_model'):
 
 # =============   Util Code for PART 2 - Shallow CNN Data-Driven =============
 class ITDataset(Dataset):
-    def __init__(self, stimuli, neural_responses, transform=None):
+    def __init__(self, stimuli, neural_responses, objects_cat,transform=None):
         self.stimuli = stimuli
         self.neural_responses = neural_responses
+        self.objects_cat = objects_cat
         self.transform = transform
 
     def __len__(self):
@@ -95,13 +96,14 @@ class ITDataset(Dataset):
     def __getitem__(self, idx):
         img_np = self.stimuli[idx]
         label = self.neural_responses[idx]
+        object_cat = self.objects_cat[idx]
         if self.transform:
             img = np.transpose(img_np, (1,2,0))
             img = transforms.ToPILImage()(img)
             img = self.transform(img)
         else:
             img = torch.tensor(img_np, dtype=torch.float32)
-        return img, torch.tensor(label, dtype=torch.float32)
+        return img, torch.tensor(label, dtype=torch.float32), object_cat
 
 # CNN Definition
 class ShallowCNN(nn.Module):
@@ -144,7 +146,7 @@ def train_model(model, train_loader, val_loader, device,
     for epoch in range(1, num_epochs+1):
         model.train()
         running_loss = 0.0
-        for images, labels in train_loader:
+        for images, labels, objects_cat in train_loader:
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(images)
@@ -156,7 +158,7 @@ def train_model(model, train_loader, val_loader, device,
         model.eval()
         with torch.no_grad():
             preds_train, targs_train = [], []
-            for images, labels in train_loader:
+            for images, labels, objects_cat in train_loader:
                 images = images.to(device)
                 out = model(images).cpu().numpy()
                 preds_train.append(out)
@@ -167,7 +169,7 @@ def train_model(model, train_loader, val_loader, device,
             train_ev = explained_variance_score(targs_train, preds_train)
 
             preds_val, targs_val = [], []
-            for images, labels in val_loader:
+            for images, labels, objects_cat in val_loader:
                 images = images.to(device)
                 out = model(images).cpu().numpy()
                 preds_val.append(out)
@@ -193,17 +195,19 @@ def train_model(model, train_loader, val_loader, device,
 
 def evaluate_model(model, loader, device):
     model.eval()
-    preds, targs = [], []
+    preds, targs, objects_cat = [], [], []
     with torch.no_grad():
-        for images, labels in loader:
+        for images, labels, obj_cat in loader:
             images = images.to(device)
             preds.append(model(images).cpu().numpy())
             targs.append(labels.numpy())
+            objects_cat.append(obj_cat)
     preds = np.concatenate(preds)
     targs = np.concatenate(targs)
-    print("Final R²:", r2_score(targs, preds))
-    print("Final EV:", explained_variance_score(targs, preds))
-    return preds, targs
+    objects_cat = np.concatenate(objects_cat)
+    #print("Final R²:", r2_score(targs, preds))
+    #print("Final EV:", explained_variance_score(targs, preds))
+    return preds, targs, objects_cat
 
 # Plotting
 def save_training_plots(metrics, folder="plots_cnn"):

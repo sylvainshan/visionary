@@ -11,7 +11,7 @@ import torch.utils.data as data
 from torchvision.models.feature_extraction import create_feature_extractor
 from torch.utils.data import DataLoader, TensorDataset, Dataset
 
-from utils_gomar2 import *
+from utils import *
 
 # === Utils ===
 # to add here for submission
@@ -39,7 +39,7 @@ def run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objec
     print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
 
     # Compute metrics for training and validation set
-    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
     log_metrics_in_csv(model_name="linear",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
@@ -71,7 +71,7 @@ def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, o
     print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
 
     # Compute metrics for training and validation set
-    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
     log_metrics_in_csv(model_name="linear_pca",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
@@ -132,7 +132,7 @@ def run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, ob
     print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
 
     # Compute metrics for training and validation set
-    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred)
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
     log_metrics_in_csv(model_name="ridge_cv5",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
@@ -199,7 +199,7 @@ def run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train
     spikes_train_pred = model.predict(X_train)
     val_mse = mean_squared_error(spikes_val, spikes_val_pred)
     print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
-
+    print(spikes_val_pred.shape)
     # Compute metrics for training and validation set
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
     log_metrics_in_csv(model_name="ridge_pca_cv5",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
@@ -376,8 +376,8 @@ def run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, 
     _, _, H, _ = stim_train.shape
     _, n_neurons = spikes_train.shape
 
-    train_ds = ITDataset(stim_train, spikes_train)
-    val_ds   = ITDataset(stim_val,   spikes_val)
+    train_ds = ITDataset(stim_train, spikes_train, objects_train)
+    val_ds   = ITDataset(stim_val,   spikes_val, objects_val)
     train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
     val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=True)
 
@@ -389,13 +389,13 @@ def run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, 
     model, metrics = train_model(model, train_loader, val_loader, device,
                                  num_epochs=40, learning_rate=1e-3)
     computation_time = time.time() - start_time
-    spikes_val_pred, targs = evaluate_model(model, val_loader, device)
-    spikes_train_pred, targs = evaluate_model(model, train_loader, device)
+    spikes_val_pred, targs_val, objects_val = evaluate_model(model, val_loader, device)
+    spikes_train_pred, targs_train, objects_train = evaluate_model(model, train_loader, device)
     #save_training_plots(metrics)
 
     # Compute metrics for training and validation set
-    (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred,'train')
-    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
+    (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(targs_train, spikes_train_pred,'train')
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(targs_val, spikes_val_pred,'val')
     log_metrics_in_csv(model_name='data_driven_shallow_cnn', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
     log_metrics_in_csv(model_name='data_driven_shallow_cnn', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
     
@@ -403,11 +403,11 @@ def run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, 
     plot_corr_ev_distribution(corr_val, ev_val,'data_driven_shallow_cnn')
 
     # plot dissimilarity matrix on validation set
-    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'data_driven_shallow_cnn', metric='correlation')
+    plot_population_rdm_analysis(spikes_val_pred, targs_val, objects_val, 'data_driven_shallow_cnn', metric='correlation')
 
     # plot neuron site brain activity prediction
     for site in [39,107,152]:
-        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'data_driven_shallow_cnn')
+        plot_neuron_site_response(spikes_val_pred,targs_val, objects_val, site, 'data_driven_shallow_cnn')
 
 # PART 3
 def run_best(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
