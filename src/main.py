@@ -575,10 +575,10 @@ def run_resnet_adapter(stimulus_train, stimulus_val, stimulus_test, objects_trai
                                  generator=g_main)
 
     config = {
-            'name': 'ResNet50_7000x2_classifier_0.52',
+            'name': 'ResNet34_7000x2_classifier_0.52',
             'model_config': {
                 'architecture': 'resnet',            
-                'resnet_version': 'resnet50',        
+                'resnet_version': 'resnet34',        
                 'pretrained': True,
                 'freeze_features': False, 
                 'classifier': {'hidden_sizes': [7000, 7000], 'activation': 'relu', 'dropout': 0.52}
