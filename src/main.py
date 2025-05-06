@@ -410,8 +410,192 @@ def run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, 
         plot_neuron_site_response(spikes_val_pred,targs_val, objects_val, site, 'data_driven_shallow_cnn')
 
 # PART 3
+def run_experiment(config, n_neurons, train_loader, val_loader, device):
+    """Runs a single training experiment with the given configuration."""
+    exp_name = config.get('name', f"exp_{int(time.time())}")
+    print(f"\n===== Starting Experiment: {exp_name} =====")
+    start_time = time.time()
+
+    current_seed = config.get('seed', SEED)
+    set_seed(current_seed)
+    print(f"Using Seed: {current_seed}")
+
+    # --- Initialize Model based on architecture ---
+    model_config = config.get('model_config', {})
+    architecture = model_config.get('architecture', 'resnet').lower()  # Default to ResNet if not specified
+    pretrained = model_config.get('pretrained', True)                  # Default to pretrained weights
+    freeze_features = model_config.get('freeze_features', False)       # Default to full training
+    unfreeze_blocks = model_config.get('unfreeze_blocks', 0)           # Default to 0 blocks
+    classifier_config = model_config.get('classifier', None)           # Default to classifier implemented in each model class
+    
+    if architecture == 'resnet':
+        resnet_version = model_config.get('resnet_version', 'resnet34')  # Default to ResNet34
+        model = ResNetAdapter(
+            n_neurons,
+            resnet_version=resnet_version,
+            pretrained=pretrained,
+            classifier_config=classifier_config,
+            freeze_features=freeze_features,
+            unfreeze_blocks=unfreeze_blocks
+        )
+        print(f"Model: {resnet_version.upper()} Adapter")
+    elif architecture == 'vgg_bn':
+        model = VGG_BN(
+            n_neurons,
+            pretrained=pretrained,
+            classifier_config=classifier_config,
+            freeze_features=freeze_features,
+            unfreeze_blocks=unfreeze_blocks
+        )
+        print(f"Model: VGG_BN")
+    else:
+        raise ValueError(f"Unsupported architecture: {architecture}")
+    
+    print(f"Model Config: {model_config}")
+
+    # --- Training parameters ---
+    train_params = config.get('train_params', {})
+    num_epochs = train_params.get('num_epochs', 30)
+    patience = train_params.get('patience', 5)
+
+    optimizer_config = config.get('optimizer', {'name': 'AdamW', 'params': {'lr': 1e-4, 'weight_decay': 1e-5}})
+    scheduler_config = config.get('scheduler', {'name': 'CosineAnnealingLR', 'params': {}})
+
+    # --- Train the model ---
+    start_time = time.time()
+    model, metrics, best_val_ev = train_model_best(
+        model,
+        train_loader,
+        val_loader,
+        device,
+        optimizer_config=optimizer_config,
+        scheduler_config=scheduler_config,
+        num_epochs=num_epochs,
+        patience=patience
+    )
+    computation_time = time.time() - start_time
+    # --- Evaluate the model ---
+    print("\nFinal evaluation on validation set using best model:")
+    spikes_train_pred, targs_train, objects_train = evaluate_model(model, train_loader, device)
+    spikes_val_pred, targs_val, objects_val = evaluate_model(model, val_loader, device)
+
+    end_time = time.time()
+    duration = end_time - start_time
+    
+    # Compute metrics for training and validation set
+    (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(targs_train, spikes_train_pred,'train')
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(targs_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name= exp_name + '_val', augmented=False, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+    log_metrics_in_csv(model_name=exp_name + '_train', augmented=False, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
+    
+    print(f"===== Experiment Finished: {exp_name} | Best Val EV: {best_val_ev:.4f} | Final Val EV: {ev_avg_val:.4f} | Duration: {duration:.2f}s =====")
+
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val,exp_name)
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred, targs_val, objects_val, exp_name, metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,targs_val, objects_val, site, exp_name)
+
+    # Return metrics 
+    return {
+        'config_name': exp_name, 
+        'architecture': architecture,
+        'best_val_ev': best_val_ev, 
+        'final_val_ev': ev_val, 
+        'final_val_r2': r2_val, 
+        'duration_s': duration, 
+        'seed': current_seed, 
+        'config': config
+    }
+
+def run_vgg_bn(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running VGG model (2nd best model)...")
+    train_ds = ITDataset(stimulus_train, spikes_train, objects_train, transform=None) 
+    val_ds = ITDataset(stimulus_val, spikes_val, objects_val, transform=None)      
+
+    num_workers = 2
+    batch_size = 128 
+    g_main = torch.Generator()
+    g_main.manual_seed(SEED)
+    train_loader = data.DataLoader(train_ds, 
+                                   batch_size=batch_size, 
+                                   shuffle=True,
+                                   num_workers=num_workers, 
+                                   worker_init_fn=worker_init_fn, 
+                                   generator=g_main)
+    val_loader = data.DataLoader(val_ds, 
+                                 batch_size=batch_size, 
+                                 shuffle=False,
+                                 num_workers=num_workers, 
+                                 worker_init_fn=worker_init_fn, 
+                                 generator=g_main)
+
+    config = {
+             'name': 'VGG_Wider_7000x2_D0.47_StepLR_15_0.5', 
+             'model_config': {
+                 'architecture': 'vgg_bn',           
+                 'pretrained': True,
+                 'freeze_features': False,
+                 'classifier': {'hidden_sizes': [7000, 7000], 'activation': 'relu', 'dropout': 0.47}
+             },
+             'optimizer': {'name': 'AdamW', 'params': {'lr': 1e-4, 'weight_decay': 1e-5}},
+             'scheduler': {'name': 'StepLR', 'params': {'step_size': 15, 'gamma': 0.5}}, 
+             'train_params': {'num_epochs': 60, 'patience': 7}
+        }
+
+    _, n_neurons = spikes_train.shape
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    _ = run_experiment(config, n_neurons, train_loader, val_loader, device)
+
+def run_resnet_adapter(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running Best model (as selected by validation performance)...")
+    train_ds = ITDataset(stimulus_train, spikes_train, objects_train, transform=None) 
+    val_ds = ITDataset(stimulus_val, spikes_val, objects_val, transform=None)      
+
+    num_workers = 1 # initially 2 but warning
+    batch_size = 128 
+    g_main = torch.Generator()
+    g_main.manual_seed(SEED)
+    train_loader = data.DataLoader(train_ds, 
+                                   batch_size=batch_size, 
+                                   shuffle=True,
+                                   num_workers=num_workers, 
+                                   worker_init_fn=worker_init_fn, 
+                                   generator=g_main)
+    val_loader = data.DataLoader(val_ds, 
+                                 batch_size=batch_size, 
+                                 shuffle=False,
+                                 num_workers=num_workers, 
+                                 worker_init_fn=worker_init_fn, 
+                                 generator=g_main)
+
+    config = {
+            'name': 'ResNet50_7000x2_classifier_0.52',
+            'model_config': {
+                'architecture': 'resnet',            
+                'resnet_version': 'resnet50',        
+                'pretrained': True,
+                'freeze_features': False, 
+                'classifier': {'hidden_sizes': [7000, 7000], 'activation': 'relu', 'dropout': 0.52}
+            },
+            'optimizer': {'name': 'Adam', 'params': {'lr': 1e-4, 'weight_decay': 1e-5}},
+            'scheduler': {'name': 'StepLR', 'params': {'step_size': 15, 'gamma': 0.5}}, 
+            'train_params': {'num_epochs': 60, 'patience': 10}
+        }
+
+    _, n_neurons = spikes_train.shape
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    _ = run_experiment(config, n_neurons, train_loader, val_loader, device)
+
 def run_best(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running Best model (as selected by validation performance)...")
+    run_resnet_adapter(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
 
 def run_all(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
     print("Running All models... ")
@@ -440,6 +624,8 @@ def parse_args():
             "task_driven_pretrained",
             "task_driven_random",
             "data_driven",
+            "resnet_adapter",
+            "vgg_bn",
             "best",
             "all"
         ],
@@ -454,7 +640,9 @@ def parse_args():
             "  task_driven_pretrained  - Task-driven model using trained weights\n"
             "  task_driven_random   - Task-driven model using random weights\n"
             "  data_driven          - Data-driven model\n"
-            "  best                 - Best-performing model\n"
+            "  resnet_adapter       - ResNet Adapter model\n"
+            "  vgg_bn              - VGG model\n"
+            "  best                 - Best-performing model => resnet_adapter\n"
             "  all                  - Run all models sequentially and output metrics as CSV"
         )
     )
@@ -472,8 +660,11 @@ if __name__ == "__main__":
     args = parse_args()
 
     # Fix seed to 42
-    seed_everything(42)
-
+    # Set the seed globally 
+    SEED = 42
+    seed_everything(SEED)
+    set_seed(SEED)
+    
     # Load data and compute PCA
     stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = get_data(augmented=args.augment)
 

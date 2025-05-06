@@ -9,6 +9,7 @@ import torch
 import gdown
 import random
 import gc
+import copy
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,14 @@ from tqdm import tqdm
 from datetime import datetime
 
 from torch.utils.data import DataLoader, TensorDataset, Dataset
+import torch.optim.lr_scheduler as lr_scheduler
 from torchvision.models import resnet50, ResNet50_Weights
+from torchvision.models import resnet18, ResNet18_Weights
+from torchvision.models import resnet34, ResNet34_Weights
+from torchvision.models import resnet50, ResNet50_Weights
+from torchvision.models import resnet101, ResNet101_Weights
+from torchvision.models import resnet152, ResNet152_Weights
+from torchvision.models import vgg11_bn, VGG11_BN_Weights
 from torchvision import transforms
 import torch.nn as nn
 import torch.optim as optim
@@ -99,6 +107,11 @@ class ITDataset(Dataset):
         object_cat = self.objects_cat[idx]
         if self.transform:
             img = np.transpose(img_np, (1,2,0))
+            if img.dtype != np.uint8:
+                if img.max() <= 1.0 and img.min() >= 0:
+                    img = (img * 255).astype(np.uint8)
+                else: 
+                    img = img.astype(np.uint8)
             img = transforms.ToPILImage()(img)
             img = self.transform(img)
         else:
@@ -215,6 +228,430 @@ def save_training_plots(metrics, folder="plots_cnn"):
     epochs = np.arange(1, len(metrics['train_loss'])+1)
     plt.figure(); plt.plot(epochs, metrics['train_loss'], label='Train Loss'); plt.plot(epochs, metrics['val_loss'], label='Val Loss'); plt.legend(); plt.savefig(os.path.join(folder,'loss_curve.png')); plt.close()
     plt.figure(); plt.plot(epochs, metrics['train_ev'], label='Train EV'); plt.plot(epochs, metrics['val_ev'], label='Val EV'); plt.legend(); plt.savefig(os.path.join(folder,'ev_curve.png')); plt.close()
+
+# =================   Util Code for PART 3 - Best Models =============
+
+class ResNetAdapter(nn.Module):
+    """
+    ResNet model with a specified version (e.g., resnet18, resnet34, resnet50, resnet101, resnet152) and a custom classifier.
+    """
+    def __init__(self, num_neurons, resnet_version='resnet18', pretrained=True, classifier_config=None, freeze_features=True, unfreeze_blocks=0):
+        super().__init__()
+        self.resnet_version = resnet_version.lower()
+
+        # --- Load Pretrained ResNet weights if required ---
+        if self.resnet_version == 'resnet18':
+            weights = ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+            model = resnet18(weights=weights)
+            num_ftrs = model.fc.in_features # 512
+        elif self.resnet_version == 'resnet34':
+            weights = ResNet34_Weights.IMAGENET1K_V1 if pretrained else None
+            model = resnet34(weights=weights)
+            num_ftrs = model.fc.in_features # 512
+        elif self.resnet_version == 'resnet50':
+            weights = ResNet50_Weights.IMAGENET1K_V2 if pretrained else None 
+            model = resnet50(weights=weights)
+            num_ftrs = model.fc.in_features # 2048
+        elif self.resnet_version == 'resnet101':
+            weights = ResNet101_Weights.IMAGENET1K_V2 if pretrained else None
+            model = resnet101(weights=weights)
+            num_ftrs = model.fc.in_features # 2048
+        elif self.resnet_version == 'resnet152':
+            weights = ResNet152_Weights.IMAGENET1K_V2 if pretrained else None
+            model = resnet152(weights=weights)
+            num_ftrs = model.fc.in_features # 2048
+        else:
+            raise ValueError(f"Unsupported ResNet version: {resnet_version}")
+
+        if pretrained:
+            print(f"Loading pretrained weights for {self.resnet_version}...")
+        else:
+             print(f"Initializing {self.resnet_version} with random weights...")
+
+        # --- Extract Feature Layers ---
+        self.features = nn.Sequential(
+            model.conv1,
+            model.bn1,
+            model.relu,
+            model.maxpool,
+            model.layer1,
+            model.layer2,
+            model.layer3,
+            model.layer4
+        )
+        self.num_feature_outputs = num_ftrs
+
+        # --- If freeze_features is True, pretrained layers will not be modified ---
+        if freeze_features:
+            print("Freezing ResNet feature layers...")
+            for param in self.features.parameters():
+                param.requires_grad = False
+
+            # We add the option to unfreeze 'unfreeze_blocks' of the last ResNet blocks
+            if unfreeze_blocks > 0:
+                resnet_blocks = [self.features[7], self.features[6], self.features[5], self.features[4]] # layer4, layer3, layer2, layer1
+                blocks_to_unfreeze = min(unfreeze_blocks, len(resnet_blocks))
+                print(f"Unfreezing last {blocks_to_unfreeze} ResNet block(s)...")
+                for i in range(blocks_to_unfreeze):
+                    for param in resnet_blocks[i].parameters():
+                        param.requires_grad = True
+
+        # --- Define Classifier Dynamically ---  
+        if classifier_config is None:
+            # Default classifier configuration if None provided
+            classifier_config = {
+                'hidden_sizes': [1024], # Smaller default for ResNet features
+                'activation': 'relu',
+                'dropout': 0.5
+            }
+
+        layers = []
+        layers.append(nn.AdaptiveAvgPool2d((1, 1)))
+        layers.append(nn.Flatten())
+        input_size = self.num_feature_outputs # Input size is determined by ResNet features
+
+        # Defining the activation function
+        activation_name = classifier_config.get('activation', 'relu').lower()
+        if activation_name == 'relu':
+            activation_fn = nn.ReLU(inplace=True)
+        elif activation_name == 'gelu':
+            activation_fn = nn.GELU()
+        else:
+            raise ValueError(f"Unsupported activation: {activation_name}")
+
+        dropout_rate = classifier_config.get('dropout', 0.5)
+        hidden_sizes = classifier_config.get('hidden_sizes', [1024])
+
+        for hidden_size in hidden_sizes:
+            layers.append(nn.Linear(input_size, hidden_size))
+            layers.append(activation_fn)
+            if dropout_rate > 0:
+                layers.append(nn.Dropout(dropout_rate))
+            input_size = hidden_size
+
+        layers.append(nn.Linear(input_size, num_neurons))
+        self.classifier = nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+
+class VGG_BN(nn.Module):
+    """
+    VGG-inspired model with 5 convolutional blocks with batch normalization and a custom classifier. 
+
+    The model can be initialized with pretrained weights from VGG11_BN and allows for dynamic classifier configuration.
+    """
+    def __init__(self, num_neurons, pretrained=True, classifier_config=None, freeze_features=False, unfreeze_blocks=0): 
+        super().__init__()
+
+        # --- Feature Extractor with 5 convolutional layers ---
+        self.features = nn.Sequential(  
+            # Block 1: 64 filters   
+            nn.Conv2d(3, 64, kernel_size=3, padding=1),     # our_conv1 (0)  
+            nn.BatchNorm2d(64),                             # our_bn1   (1)
+            nn.ReLU(inplace=True),                          # our_relu1 (2)
+            nn.MaxPool2d(kernel_size=2, stride=2),          # our_pool1 (3)
+
+            # Block 2: 128 filters  
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),   # our_conv2 (4)
+            nn.BatchNorm2d(128),                            # our_bn2   (5) 
+            nn.ReLU(inplace=True),                          # our_relu2 (6)
+            nn.MaxPool2d(kernel_size=2, stride=2),          # our_pool2 (7)
+
+            # Block 3: 256 filters  
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),  # our_conv3 (8)
+            nn.BatchNorm2d(256),                            # our_bn3   (9)
+            nn.ReLU(inplace=True),                          # our_relu3 (10)
+            nn.MaxPool2d(kernel_size=2, stride=2),          # our_pool3 (11)
+
+            # Block 4: 256 filters  
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),  # our_conv4 (12)
+            nn.BatchNorm2d(256),                            # our_bn4   (13)
+            nn.ReLU(inplace=True),                          # our_relu4 (14)
+            nn.MaxPool2d(kernel_size=2, stride=2),          # our_pool4 (15)
+
+            # Block 5: 256 filters  
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),  # our_conv5 (16)
+            nn.BatchNorm2d(256),                            # our_bn5   (17)
+            nn.ReLU(inplace=True),                          # our_relu5 (18)
+            nn.MaxPool2d(kernel_size=2, stride=2),          # our_pool5 (19)
+        )
+
+        # --- Pretrained Weights Loading ---
+        if pretrained:
+            print("Loading pretrained weights from vgg11_bn...")
+            try:
+                # Load weights from VGG11_BN
+                vgg_bn_model = vgg11_bn(weights=VGG11_BN_Weights.IMAGENET1K_V1)
+                vgg_layers = list(vgg_bn_model.features.children())
+                our_layers = list(self.features.children())
+
+                with torch.no_grad():
+                    layers_to_copy = [  
+                        (0, 1, 0, 1),     # (our_conv1, our_bn1, vgg_conv1, vgg_bn1)  
+                        (4, 5, 4, 5),     # (our_conv2, our_bn2, vgg_conv2, vgg_bn2)
+                        (8, 9, 8, 9),     # (our_conv3, our_bn3, vgg_conv3, vgg_bn3)
+                        (12, 13, 11, 12), # (our_conv4, our_bn4, vgg_conv4, vgg_bn4)
+                        (16, 17, 15, 16)  # (our_conv5, our_bn5, vgg_conv5, vgg_bn5)
+                    ]
+                    print("Mapping VGG11_BN layers to VGG_BN layers:")
+                    for i, (our_c_idx, our_bn_idx, vgg_c_idx, vgg_bn_idx) in enumerate(layers_to_copy):
+                         if (our_c_idx < len(our_layers) and vgg_c_idx < len(vgg_layers) and
+                             our_bn_idx < len(our_layers) and vgg_bn_idx < len(vgg_layers) and
+                             isinstance(our_layers[our_c_idx], nn.Conv2d) and isinstance(vgg_layers[vgg_c_idx], nn.Conv2d) and
+                             isinstance(our_layers[our_bn_idx], nn.BatchNorm2d) and isinstance(vgg_layers[vgg_bn_idx], nn.BatchNorm2d)):
+
+                            print(f"  Layer {i+1}: Copying VGG11_BN Conv {vgg_c_idx} -> {our_c_idx} and VGG11_BN BN {vgg_bn_idx} -> {our_bn_idx}")
+                            our_conv = our_layers[our_c_idx]
+                            vgg_conv = vgg_layers[vgg_c_idx]
+                            our_bn = our_layers[our_bn_idx]
+                            vgg_bn = vgg_layers[vgg_bn_idx]
+
+                            # Adapt weights for last two convolutional layers
+                            if our_c_idx in [12, 16]:
+                                print(f"    Adapting Conv weights/bias (VGG out: {vgg_conv.out_channels}, Our out: {our_conv.out_channels})")
+                                our_conv.weight.copy_(vgg_conv.weight[:our_conv.out_channels, :vgg_conv.in_channels])
+                                our_conv.bias.copy_(vgg_conv.bias[:our_conv.out_channels])
+                            else:
+                                if our_conv.weight.shape == vgg_conv.weight.shape:
+                                    our_conv.weight.copy_(vgg_conv.weight)
+                                    our_conv.bias.copy_(vgg_conv.bias)
+                                else:
+                                     print(f"    Warning: Shape mismatch for Conv layer {i+1}. Skipping weight copy.")
+                                     continue # Skip BN copy too if conv failed
+
+                            # Adapt weights for last two BN layers
+                            if our_bn_idx in [13, 17]:
+                                print(f"    Adapting BN params (VGG features: {vgg_bn.num_features}, Our features: {our_bn.num_features})")
+                                num_features_to_copy = min(our_bn.num_features, vgg_bn.num_features)
+                                our_bn.weight.copy_(vgg_bn.weight[:num_features_to_copy])
+                                our_bn.bias.copy_(vgg_bn.bias[:num_features_to_copy])
+                                our_bn.running_mean.copy_(vgg_bn.running_mean[:num_features_to_copy])
+                                our_bn.running_var.copy_(vgg_bn.running_var[:num_features_to_copy])
+                            else:
+                                if our_bn.weight.shape == vgg_bn.weight.shape:
+                                    our_bn.weight.copy_(vgg_bn.weight)
+                                    our_bn.bias.copy_(vgg_bn.bias)
+                                    our_bn.running_mean.copy_(vgg_bn.running_mean)
+                                    our_bn.running_var.copy_(vgg_bn.running_var)
+                                else:
+                                    print(f"    Warning: Shape mismatch for BN layer {i+1}. Skipping BN copy.")
+                         else:
+                             print(f"  Warning: Index out of bounds or type mismatch for layer mapping {i+1}. Skipping.")
+
+            except Exception as e:
+                print(f"Error loading pretrained weights: {e}. Proceeding with random initialization.")
+
+        # --- Freeze Features if Required ---
+        # In this case, only the classifier will be trained
+        if freeze_features:
+            print("Freezing VGG_BN feature layers...")
+            for param in self.features.parameters():
+                param.requires_grad = False
+            
+            # If the number 'unfreeze_blocks' is specified, unfreeze the last blocks to allow training
+            if unfreeze_blocks > 0:
+                layers_per_block = 4 
+                total_feature_layers = len(self.features)
+                layers_to_unfreeze = min(layers_per_block * unfreeze_blocks, total_feature_layers)
+                
+                start_index = max(0, total_feature_layers - layers_to_unfreeze)
+                print(f"Unfreezing last {unfreeze_blocks} block(s) (layers {start_index} to {total_feature_layers-1})")
+                for i in range(start_index, total_feature_layers):
+                    for param in self.features[i].parameters():
+                        param.requires_grad = True
+
+        # --- Define Classifier Dynamically ---
+        if classifier_config is None:
+            # Default classifier configuration if None provided
+            classifier_config = {
+                'hidden_sizes': [2048, 2048], 
+                'activation': 'relu', 
+                'dropout': 0.27
+            }
+        
+        # The classifier head has the following structure:
+        # AdaptiveAvgPool2d -> Flatten -> Classifier Layers 
+        layers = []
+        input_size = 256 * 7 * 7 # Output size after features and AdaptiveAvgPool2d((7, 7))
+        layers.append(nn.AdaptiveAvgPool2d((7, 7)))
+        layers.append(nn.Flatten())
+
+        activation_name = classifier_config.get('activation', 'relu').lower()
+        if activation_name == 'relu':
+            activation_fn = nn.ReLU(inplace=True)
+        elif activation_name == 'gelu':
+            activation_fn = nn.GELU()
+        else:
+            raise ValueError(f"Unsupported activation: {activation_name}")
+
+        dropout_rate = classifier_config.get('dropout', 0.27)
+        hidden_sizes = classifier_config.get('hidden_sizes', [2048, 2048])
+
+        for hidden_size in hidden_sizes:
+            layers.append(nn.Linear(input_size, hidden_size))
+            layers.append(activation_fn)
+            if dropout_rate > 0:
+                layers.append(nn.Dropout(dropout_rate))
+            input_size = hidden_size
+
+        layers.append(nn.Linear(input_size, num_neurons))
+        self.classifier = nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+
+def train_model_best(model, train_loader, val_loader, device, optimizer_config, scheduler_config, num_epochs=50, patience=10):
+    """Trains a model with early stopping and displays metrics."""
+    # --- Initialize Loss Function ---
+    criterion = nn.MSELoss()
+
+    # --- Initialize Optimizer ---
+    optimizer_name = optimizer_config.get('name', 'AdamW').lower()
+    optimizer_params = optimizer_config.get('params', {'lr': 1e-4, 'weight_decay': 1e-5})
+    print(f"Initializing Optimizer: {optimizer_name} with params: {optimizer_params}")
+    if optimizer_name == 'adamw':
+        optimizer = optim.AdamW(model.parameters(), **optimizer_params)
+    elif optimizer_name == 'adam':
+        optimizer = optim.Adam(model.parameters(), **optimizer_params)
+    elif optimizer_name == 'sgd':
+         optimizer = optim.SGD(model.parameters(), **optimizer_params)
+    else:
+        raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+    # --- Initialize Scheduler ---
+    # Default to CosineAnnealingLR if not specified
+    scheduler_name = scheduler_config.get('name', 'CosineAnnealingLR').lower()
+    scheduler_params = scheduler_config.get('params', {}) 
+    print(f"Initializing Scheduler: {scheduler_name} with params: {scheduler_params}")
+    
+    if scheduler_name == 'cosineannealinglr':
+        if 'T_max' not in scheduler_params:
+             scheduler_params['T_max'] = num_epochs  # Default to num_epochs
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, **scheduler_params)
+    
+    elif scheduler_name == 'steplr':
+        if 'step_size' not in scheduler_params: 
+             scheduler_params['step_size'] = max(1, num_epochs // 3)
+             print(f"  (Using default step_size: {scheduler_params['step_size']})")
+        if 'gamma' not in scheduler_params:
+             scheduler_params['gamma'] = 0.1
+             print(f"  (Using default gamma: {scheduler_params['gamma']})")
+        scheduler = lr_scheduler.StepLR(optimizer, **scheduler_params)
+    
+    elif scheduler_name == 'reducelronplateau':
+         # Default params for ReduceLROnPlateau if not provided
+         if 'mode' not in scheduler_params: scheduler_params['mode'] = 'max' # Maximize EV
+         if 'factor' not in scheduler_params: scheduler_params['factor'] = 0.1
+         if 'patience' not in scheduler_params: scheduler_params['patience'] = patience // 2 # Scheduler patience < early stopping
+         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, **scheduler_params)
+    else:
+        raise ValueError(f"Unsupported scheduler: {scheduler_name}")
+
+    # --- Training Loop ---
+    model.to(device)
+
+    train_losses, val_losses = [], []
+    train_evs, val_evs = [], []
+
+    best_val_ev = -float('inf')  # initial best EV to avoid early stopping
+    best_model_wts = copy.deepcopy(model.state_dict())
+    epochs_no_improve = 0  # counter for early stopping
+
+    print(f"--- Starting Training ---")
+    print(f"Epochs: {num_epochs}, Early Stopping Patience: {patience}")
+    print(f"-------------------------")
+
+    for epoch in range(1, num_epochs + 1):
+        # Training phase
+        model.train()
+        epoch_train_loss = 0.0
+        for images, labels, object_cat in train_loader:
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            epoch_train_loss += loss.item() * images.size(0)
+        epoch_train_loss /= len(train_loader.dataset) # Avg loss per sample
+
+        # Evaluation phase
+        model.eval()
+        epoch_val_loss = 0.0
+        preds_val_list, targs_val_list = [], []
+        with torch.no_grad():
+            # Validation metrics
+            for images, labels, object_cat in val_loader:
+                images = images.to(device)
+                outputs = model(images)
+                loss = criterion(outputs, labels.to(device))
+                epoch_val_loss += loss.item() * images.size(0)
+                preds_val_list.append(outputs.cpu().numpy())
+                targs_val_list.append(labels.numpy())
+
+        epoch_val_loss /= len(val_loader.dataset) # Avg loss per sample
+        preds_val = np.concatenate(preds_val_list)
+        targs_val = np.concatenate(targs_val_list)
+        epoch_val_ev = explained_variance_score(targs_val, preds_val)
+
+        # Training Metrics (comment this part for faster training)
+        epoch_train_ev = -1.0 
+        preds_train_list, targs_train_list = [], []
+        with torch.no_grad():
+            for images, labels, object_cat in train_loader:
+                images = images.to(device)
+                outputs = model(images)
+                preds_train_list.append(outputs.cpu().numpy())
+                targs_train_list.append(labels.numpy())
+        preds_train = np.concatenate(preds_train_list)
+        targs_train = np.concatenate(targs_train_list)
+        epoch_train_ev = explained_variance_score(targs_train, preds_train)
+
+        # Scheduler Step 
+        if isinstance(scheduler, lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(epoch_val_ev) # Use validation EV
+        else:
+            scheduler.step()
+
+        # Store metrics
+        train_losses.append(epoch_train_loss)
+        val_losses.append(epoch_val_loss)
+        train_evs.append(epoch_train_ev) 
+        val_evs.append(epoch_val_ev)
+
+        # Print epoch metrics
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch}/{num_epochs} | LR={current_lr:.1e} "
+              f"Val Loss={epoch_val_loss:.4f} " 
+              f"Train EV={epoch_train_ev:.4f} "
+              f"Val EV={epoch_val_ev:.4f}" 
+              f" | Best Val EV={best_val_ev:.4f}")
+
+        # Early stopping check
+        if epoch_val_ev > best_val_ev:
+            best_val_ev = epoch_val_ev
+            best_model_wts = copy.deepcopy(model.state_dict())
+            epochs_no_improve = 0
+            print(f"  (New best model saved with Val EV: {best_val_ev:.4f})")
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"Early stopping triggered after {epoch} epochs.")
+                break
+
+    print(f"Training finished. Loading best model with Val EV={best_val_ev:.4f}")
+    model.load_state_dict(best_model_wts)
+
+    # Prepare metrics dictionary
+    metrics_history = {'train_loss': train_losses, 'val_loss': val_losses,
+                       'train_ev': train_evs, 'val_ev': val_evs}
+
+    return model, metrics_history, best_val_ev
 
 # ============ General Utility Functions ================
 def load_it_data(path_to_data):
@@ -339,32 +776,6 @@ def log_metrics_in_csv(
 
         writer.writerow(row)
 
-""" def encode_object_base_labels(objects_train):
-    ""
-    Groups object labels by their alphabetic base name (e.g., 'car1', 'car2' → 'car'),
-    then assigns an integer label to each base category.
-    
-    Args:
-        objects_train (list or array): List of object strings like 'car1', 'banana4', 'dog2'
-        
-    Returns:
-        label_dict (dict): Mapping from base name (e.g. 'car') to integer label
-        object_labels (np.array): Array of integer labels corresponding to input
-    ""
-    # Extract base names using regex (strip digits from end)
-    base_names = [re.match(r'[a-zA-Z]+', obj).group() for obj in objects_train]
-    
-    # Get sorted unique base names
-    unique_bases = sorted(set(base_names))
-    
-    # Map base name to integer label
-    label_dict = {base: idx for idx, base in enumerate(unique_bases)}
-    
-    # Assign labels
-    object_labels = np.array([label_dict[base] for base in base_names])
-    
-    return label_dict, object_labels """
-
 def get_group_labels(object_labels):
     """
     Given a list of object labels, return their high-level group labels
@@ -413,10 +824,7 @@ def get_data(augmented: bool):
     path_to_data = 'data'
     download_it_data(path_to_data)
     
-    if augmented:
-        stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = augment_data()
-    else:
-        stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = load_it_data(path_to_data)
+    stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = load_it_data(path_to_data)
 
     # List unique training objects
     unique = list(set(objects_train))
@@ -428,9 +836,23 @@ def get_data(augmented: bool):
 
     return stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val
 
-def augment_data():
-    print("Use augmented data input")
-    
+def set_seed(seed):
+    """Sets the seed for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed) 
+    torch.backends.cudnn.benchmark = False
+
+def worker_init_fn(worker_id):
+    """Sets the seed for DataLoader workers."""
+    base_seed = torch.initial_seed()
+    seed = (base_seed + worker_id) % (2**32)
+    np.random.seed(seed)
+    random.seed(seed)
+
 # ============= Plots Functions ==============
 def set_plot_color(model_type):
     """
@@ -442,7 +864,7 @@ def set_plot_color(model_type):
         return 'red'
     elif 'data' in model_type:
         return 'violet'
-    elif 'best' in model_type:
+    elif 'ResNet' in model_type or 'VGG' in model_type:
         return 'green'
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -525,7 +947,6 @@ def plot_corr_ev_distribution(r_values, ev_values, model_name):
     plt.savefig(outpath, dpi=300)
     plt.close()
     print(f"Saved correlation and explained variance histograms to: {outpath}")
-
 
 def plot_corr_ev_distribution2(r_values, ev_values, model_name): 
     """Plot the distribution of Pearson correlation coefficients and explained variance scores for all neurons."""
