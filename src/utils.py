@@ -1069,11 +1069,28 @@ def plot_layer_comparison(results, n_components, save=False, path=None):
 
 def plot_population_rdm_analysis(predicted_responses, true_responses, object_labels, model_name, metric='correlation'):
     """
-    Computes and plots rank-normalized RDMs for predicted and true responses separately,
-    using intelligent group labels for tick display (e.g., 'car', 'fruit', 'animal').
+    Computes Representational Dissimilarity Matrices (RDMs) for predicted and true neural population
+    responses, applies rank normalization, and plots the resulting RDMs with category-based group
+    labels.
 
-    Saves one plot per RDM to out/rdm/.
+    The function performs the following steps:
+    - Sorts responses and labels by semantic groupings (e.g., 'car', 'fruit').
+    - Computes pairwise distances to form predicted and true RDMs.
+    - Applies rank normalization to both RDMs (values scaled to [0, 1] based on percentile ranks).
+    - Computes Spearman correlation between the predicted and true RDMs.
+    - Generates and saves heatmap plots of the RDMs with annotated group ticks.
+
+    Parameters:
+    - predicted_responses (np.ndarray): Model-predicted response matrix of shape (n_objects, features).
+    - true_responses (np.ndarray): Ground truth response matrix of the same shape as predicted_responses.
+    - object_labels (list or np.ndarray): Labels corresponding to each object/row in the response matrices.
+    - model_name (str): Name of the model, used to determine output filenames and optionally condition plotting.
+    - metric (str): Distance metric to use for RDM computation (default is 'correlation').
+
+    Returns:
+    - spearman_rho (float): Spearman correlation coefficient between predicted and true RDMs.
     """
+    
     assert predicted_responses.shape == true_responses.shape, "Shapes must match"
     n = predicted_responses.shape[0]
     # Set font to Arial and size 16
@@ -1102,6 +1119,16 @@ def plot_population_rdm_analysis(predicted_responses, true_responses, object_lab
     spearman_rho, _ = spearmanr(vec_pred, vec_true)
 
     def rank_normalize(rdm):
+        """
+        Applies rank normalization to the upper triangular part of a Representational 
+        Dissimilarity Matrix (RDM), converting dissimilarities to percentiles.
+
+        Parameters:
+        - rdm (np.ndarray): A square RDM matrix with dissimilarity values.
+
+        Returns:
+        - rdm_ranked (np.ndarray): The RDM with rank-normalized values in the range [0, 1].
+        """
         values = rdm[triu]
         ranks = rankdata(values, method='average')
         percentiles = (ranks - 1) / (len(ranks) - 1)

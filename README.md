@@ -30,7 +30,9 @@ Specifies which model to run.
 - `ridge_pca_cv5` – Ridge Regression with PCA and CV
 - `task-driven_trained` – Task-driven model using trained weights
 - `task-driven_random` – Task-driven model using random weights
-- `data-driven` – Data-driven deep learning model
+- `data-driven` – Data-driven shallow CNN model
+- `resnet_adapter` – Data-driven shallow CNN model (Best)
+- `vgg_bn` – Data-driven shallow CNN model
 - `best` – Best-performing model (default)
 - `all` – Run all models sequentially
 
@@ -72,6 +74,40 @@ This flag has no argument — it's either used or not used.
 
 ---
 
+## 📊 Output Figures
+
+This project generates several plots that help analyze model performance and behavior. All figures are saved under the `out/` directory. Below is a description of the figures generated:
+
+- Correlation and Explained Variance Distributions
+
+  **Directory:** `out/corr_exp_var_histogram/{model_name}_hist.png`
+  A two-panel plot displaying histograms and boxplots for:
+
+  - Pearson correlation coefficients
+  - Explained variance (EV) scores
+
+  Each metric is shown as a percentage across all neurons. Helps assess model performance distributionally.
+
+---
+
+- Layer-wise Explained Variance
+  **Directory:** `out/layer_comparison/{model_type}_layer_comparison.png` 
+  Bar plot comparing explained variance across layers of a model. Useful for understanding how information is represented at different stages in task-driven architectures.
+
+---
+
+- Representational Dissimilarity Matrices (RDMs)
+  **Directory:** `out/rdm/{model_name}_predicted_rdm.png`
+  Visual comparison between predicted and ground truth RDMs. RDMs are rank-normalized and sorted by semantic categories. Helps evaluate how closely model representations align with neural population activity.
+
+---
+
+- Single Neuron Response Profiles
+
+  **Directory:** `out/neuron_site/{model_name}_site{site_index}.png`  
+  Line plot showing predicted vs. true neural responses for a specific neuron (site), across all stimuli. Object categories are indicated via background grouping. Great for detailed per-site inspection.
+
+
 ## 🧪 Example Usage
 
 Run the best model (default behavior):
@@ -100,11 +136,13 @@ python main.py --model all
 project/
 │
 ├── main.py                 # Entry point
-├── models/                 # Model definitions
 ├── data/                   # Raw and augmented data
-├── utils/                  # Utility scripts
 └── out/
-    └── metrics_log.csv     # Metrics log file
+    ├── metrics_log.csv     # Metrics log file
+    ├── corr_exp_var_histogram/     # Histogram plots
+    ├── layer_comparison/     # Layer comparison plots
+    ├── neuron_site/         # Single site prediction plots
+    └── rdm/         # Representational dissimilarity matrices plots
 ```
 
 ---
