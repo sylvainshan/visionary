@@ -93,12 +93,14 @@ This project generates several plots that help analyze model performance and beh
 ---
 
 - Layer-wise Explained Variance
+ 
   **Directory:** `out/layer_comparison/{model_type}_layer_comparison.png` 
   Bar plot comparing explained variance across layers of a model. Useful for understanding how information is represented at different stages in task-driven architectures.
 
 ---
 
 - Representational Dissimilarity Matrices (RDMs)
+
   **Directory:** `out/rdm/{model_name}_predicted_rdm.png`
   Visual comparison between predicted and ground truth RDMs. RDMs are rank-normalized and sorted by semantic categories. Helps evaluate how closely model representations align with neural population activity.
 
