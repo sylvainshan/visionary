@@ -932,7 +932,7 @@ def plot_corr_ev_distribution(r_values, ev_values, model_name):
     ev_values_percent = ev_values * 100
 
     # Set font size and style
-    plt.rcParams['font.size'] = 14
+    plt.rcParams['font.size'] = 18
 
     color = set_plot_color(model_name)
     fig, ax = plt.subplots(2, 2, figsize=(7, 3), gridspec_kw={'height_ratios': [1, 3]})
@@ -949,9 +949,12 @@ def plot_corr_ev_distribution(r_values, ev_values, model_name):
     # --- Correlation Coefficient Histogram ---
     sns.histplot(r_values_percent, color=color, ax=ax[1, 0])
     ax[1, 0].set_xlim(0, 100)
-    ax[1, 0].set_ylim(0, 50)
+    ax[1, 0].set_ylim(0, 42)
     ax[1, 0].spines['top'].set_visible(False)
     ax[1, 0].spines['right'].set_visible(False)
+    ax[1, 0].set_ylabel("Count", fontsize=22, weight='bold')
+    ax[1, 0].set_xticks([0, 25, 50, 75, 100])
+    ax[1, 0].set_yticks([0, 20, 40])
 
     # --- Explained Variance Boxplot ---
     sns.boxplot(x=ev_values_percent, color=color, ax=ax[0, 1], linecolor='black', linewidth=1, width=0.5)
@@ -965,9 +968,12 @@ def plot_corr_ev_distribution(r_values, ev_values, model_name):
     # --- Explained Variance Histogram ---
     sns.histplot(ev_values_percent, color=color, ax=ax[1, 1])
     ax[1, 1].set_xlim(0, 100)
-    ax[1, 1].set_ylim(0, 50)
+    ax[1, 1].set_ylim(0, 42)
+    ax[1, 1].set_ylabel("")
     ax[1, 1].spines['top'].set_visible(False)
     ax[1, 1].spines['right'].set_visible(False)
+    ax[1, 1].set_xticks([0, 25, 50, 75, 100])
+    ax[1, 1].set_yticks([0, 20, 40])
 
     plt.tight_layout()
     os.makedirs("out/corr_exp_var_histogram", exist_ok=True)
@@ -1002,7 +1008,8 @@ def plot_population_rdm_analysis(predicted_responses, true_responses, object_lab
     assert predicted_responses.shape == true_responses.shape, "Shapes must match"
     n = predicted_responses.shape[0]
     # Set font to Arial and size 16
-    plt.rcParams['font.size'] = 14
+    plt.rcParams['font.size'] = 18
+
     # Sort inputs by object labels
     object_labels = np.array(object_labels, dtype=str)
     group_labels = np.array(get_group_labels(object_labels), dtype=str)
@@ -1075,7 +1082,7 @@ def plot_population_rdm_analysis(predicted_responses, true_responses, object_lab
                 tick_labels.append(label)
                 last_label = label
 
-        plt.yticks(ticks, tick_labels, fontsize=18)
+        plt.yticks(ticks, tick_labels, fontsize=18, fontweight='bold')
         plt.gca().yaxis.tick_right()
         plt.gca().yaxis.set_label_position("right")
         plt.xticks([])  # optional: hide cluttered x-axis ticks
@@ -1152,7 +1159,7 @@ def plot_neuron_site_response(predicted_responses, true_responses, object_labels
     tick_labels.append(last_label)
 
     if 'ridge' in model_name:
-        plt.xticks(ticks, tick_labels, rotation=45,ha='center', fontsize=14)
+        plt.xticks(ticks, tick_labels, rotation=45,ha='center', fontsize=16, fontweight='bold')
     else:
         plt.xticks([])
     plt.tick_params(axis='x', length=0)  # Hide tick marks but keep labels
@@ -1212,7 +1219,7 @@ def plot_layer_comparison(ev_scores, layers_of_interest, model_type):
     plt.figure(figsize=(10, 5))
     plt.bar(layers_of_interest, ev_scores, color=set_plot_color(model_type))
     plt.ylim(0, 40)  # y-axis limit set from 0 to 40
-    plt.xticks(rotation=45, ha='right')
+    plt.xticks(rotation=45, ha='right', fontsize=18)
     
     # Style tweaks
     ax = plt.gca()
@@ -1223,8 +1230,8 @@ def plot_layer_comparison(ev_scores, layers_of_interest, model_type):
 
     # Ensure output directory exists
     os.makedirs("out/layer_comparison", exist_ok=True)
-    outpath = f"out/layer_comparison/{model_type}_layer_comparison.png"
-    plt.savefig(outpath, dpi=300)
+    outpath = f"out/layer_comparison/{model_type}_layer_comparison.pdf"
+    plt.savefig(outpath)
     plt.close()
 
     print(f"Saved layer comparison plot to: {outpath}")
