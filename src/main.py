@@ -1255,7 +1255,7 @@ def run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objec
 
     # Compute metrics for training and validation set
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
-    log_metrics_in_csv(model_name="linear",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
+    log_metrics_in_csv(model_name="linear_val",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
     plot_corr_ev_distribution(corr_val, ev_val, 'linear')
@@ -1287,7 +1287,7 @@ def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, o
 
     # Compute metrics for training and validation set
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
-    log_metrics_in_csv(model_name="linear_pca",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
+    log_metrics_in_csv(model_name="linear_pca_val",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
     plot_corr_ev_distribution(corr_val, ev_val, 'linear_pca')
@@ -1348,7 +1348,7 @@ def run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, ob
 
     # Compute metrics for training and validation set
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
-    log_metrics_in_csv(model_name="ridge_cv5",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
+    log_metrics_in_csv(model_name="ridge_cv5_val",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # plot correlation and explained-variance distribution
     plot_corr_ev_distribution(corr_val, ev_val,'ridge_cv5')
@@ -1415,15 +1415,12 @@ def run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train
     val_mse = mean_squared_error(spikes_val, spikes_val_pred)
     print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
     print(spikes_val_pred.shape)
-    # Compute metrics for training and validation set
-    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
-    log_metrics_in_csv(model_name="ridge_pca_cv5",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
 
     # Compute metrics for training and validation set
     (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred,'train')
     (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
-    log_metrics_in_csv(model_name='ridge_pca_cv5', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
-    log_metrics_in_csv(model_name='ridge_pca_cv5', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
+    log_metrics_in_csv(model_name='ridge_pca_cv5_val', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+    log_metrics_in_csv(model_name='ridge_pca_cv5_train', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
     
     # plot correlation and explained-variance distribution
     plot_corr_ev_distribution(corr_val, ev_val,'ridge_pca_cv5')
