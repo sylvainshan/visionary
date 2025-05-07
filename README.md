@@ -14,7 +14,7 @@ python main.py [--model MODEL_NAME] [--augment]
 
 If no model is specified, the script defaults to `best`.
 
-⚠️ We recommend having more than 64GB of GPU-memory to handle larger models and datasets efficiently.
+⚠️ We recommend having more than 64GB of memory to handle larger models and datasets efficiently.
 
 ---
 
