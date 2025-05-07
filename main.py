@@ -1,11 +1,12 @@
-### Utils
+import argparse
+import time
+import torch
+import pickle
 import h5py
 import os
-import pickle
 import re
 import csv
 import glob
-import torch
 import gdown
 import random
 import gc
@@ -19,6 +20,8 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from datetime import datetime
 
+from scipy.stats import pearsonr, rankdata, spearmanr
+
 from torch.utils.data import DataLoader, TensorDataset, Dataset
 import torch.optim.lr_scheduler as lr_scheduler
 from torchvision.models import resnet50, ResNet50_Weights
@@ -31,14 +34,19 @@ from torchvision.models import vgg11_bn, VGG11_BN_Weights
 from torchvision import transforms
 import torch.nn as nn
 import torch.optim as optim
+import torch.utils.data as data
+from torchvision.models.feature_extraction import create_feature_extractor
 
 from sklearn.metrics import mean_squared_error, r2_score, explained_variance_score, mean_absolute_error, mean_absolute_percentage_error
 from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import pairwise_distances
-from scipy.stats import pearsonr, rankdata, spearmanr
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
 
 
-# =============   Util Code for PART 1 - Linear + Task-Driven =============
+# =============================================================================
+# UTILS : Part 1 - Linear and Task-Driven Models
+# =============================================================================
 
 def compute_pca(X_train, X_val, n_components):
     """Perform PCA on the training set, transform both training and validation sets, and return the transformed data."
@@ -63,6 +71,7 @@ def get_pca(X_train, X_val, n_components, model_type='linear_model'):
 
     # Define the pickle file path
     pkl_file = f'out/linear_models/pca_{model_type}_{n_components}pcs.pkl'
+    os.makedirs("out/linear_models", exist_ok=True)
 
     # Check if the pickle file exists
     if os.path.exists(pkl_file):
@@ -90,7 +99,11 @@ def get_pca(X_train, X_val, n_components, model_type='linear_model'):
 
     return X_train_pca, X_val_pca
 
-# =============   Util Code for PART 2 - Shallow CNN Data-Driven =============
+
+# =============================================================================
+# UTILS : Part 2 - Shallow CNN Data-Driven
+# =============================================================================
+
 class ITDataset(Dataset):
     def __init__(self, stimuli, neural_responses, objects_cat,transform=None):
         self.stimuli = stimuli
@@ -229,7 +242,11 @@ def save_training_plots(metrics, folder="plots_cnn"):
     plt.figure(); plt.plot(epochs, metrics['train_loss'], label='Train Loss'); plt.plot(epochs, metrics['val_loss'], label='Val Loss'); plt.legend(); plt.savefig(os.path.join(folder,'loss_curve.png')); plt.close()
     plt.figure(); plt.plot(epochs, metrics['train_ev'], label='Train EV'); plt.plot(epochs, metrics['val_ev'], label='Val EV'); plt.legend(); plt.savefig(os.path.join(folder,'ev_curve.png')); plt.close()
 
-# =================   Util Code for PART 3 - Best Models =============
+
+# =============================================================================
+# UTILS : Part 3 - ResNetAdapter & VGG_BN Architectures definitions, training function
+#         (same evaluate_model function as Part 2 is used for both architectures)
+# =============================================================================
 
 class ResNetAdapter(nn.Module):
     """
@@ -600,7 +617,7 @@ def train_model_best(model, train_loader, val_loader, device, optimizer_config, 
         epoch_val_ev = explained_variance_score(targs_val, preds_val)
 
         # Training Metrics (comment this part for faster training)
-        epoch_train_ev = -1.0 
+        epoch_train_ev = -1.0
         preds_train_list, targs_train_list = [], []
         with torch.no_grad():
             for images, labels, object_cat in train_loader:
@@ -653,7 +670,11 @@ def train_model_best(model, train_loader, val_loader, device, optimizer_config, 
 
     return model, metrics_history, best_val_ev
 
-# ============ General Utility Functions ================
+
+# =============================================================================
+# UTILS : General Utility Functions (loading data, setting seeds, computing metrics, getting group labels, printing data info)
+# =============================================================================
+
 def load_it_data(path_to_data):
     """ Load IT data
 
@@ -683,28 +704,6 @@ def load_it_data(path_to_data):
 
     return stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val
 
-def visualize_img(stimulus,objects,stim_idx):
-    """Visualize image given the stimulus and corresponding index and the object name.
-
-    Args:
-        stimulus (array of float): Stimulus containing all the images
-        objects (list of str): Object list containing all the names
-        stim_idx (int): Index of the stimulus to plot
-    """    
-    normalize_mean=[0.485, 0.456, 0.406]
-    normalize_std=[0.229, 0.224, 0.225]
-
-    img_tmp = np.transpose(stimulus[stim_idx],[1,2,0])
-
-    ### Go back from normalization
-    img_tmp = (img_tmp*normalize_std + normalize_mean) * 255
-
-    plt.figure()
-    plt.imshow(img_tmp.astype(np.uint8),cmap='gray')
-    plt.title(str(objects[stim_idx]))
-    plt.show()
-    return
-
 def download_it_data(path_to_data):
     os.makedirs(path_to_data, exist_ok=True)
     output = os.path.join(path_to_data,"IT_data.h5")
@@ -713,6 +712,64 @@ def download_it_data(path_to_data):
         gdown.download(url, output, quiet=False, fuzzy=True)
     else:
         print("File already exists. Skipping download.")
+
+def get_data():
+    """
+    Downloads, loads, and returns Inferior Temporal (IT) cortex neural response data 
+    along with associated visual stimuli and object labels for training, validation, 
+    and testing.
+
+    The function performs the following steps:
+    - Downloads the IT dataset (if not already present) to the local 'data/' directory.
+    - Loads stimulus images, object labels, and neural spike data for train/val/test splits.
+    - Prints the unique object categories in the training set.
+    - Prints summary information about the training data.
+
+    Returns:
+    - stimulus_train (np.ndarray): Training images.
+    - stimulus_val (np.ndarray): Validation images.
+    - stimulus_test (np.ndarray): Test images.
+    - objects_train (list): Object labels for training data.
+    - objects_val (list): Object labels for validation data.
+    - objects_test (list): Object labels for test data.
+    - spikes_train (np.ndarray): Neural responses for training stimuli.
+    - spikes_val (np.ndarray): Neural responses for validation stimuli.
+    """
+
+    # Download and load IT data
+    path_to_data = 'data'
+    download_it_data(path_to_data)
+    
+    stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = load_it_data(path_to_data)
+
+    # List unique training objects
+    unique = list(set(objects_train))
+    print("Unique objects in training set:", unique)
+    print("Number of unique objects:", len(unique))
+
+    # Print data info
+    print_data_info(stimulus_train, spikes_train)
+
+    return stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val
+
+def set_seed(seed):
+    """Sets the seed for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed) 
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    os.environ['PYTHONHASHSEED'] = str(seed)
+
+def worker_init_fn(worker_id):
+    """Sets the seed for DataLoader workers."""
+    base_seed = torch.initial_seed()
+    seed = (base_seed + worker_id) % (2**32)
+    np.random.seed(seed)
+    random.seed(seed)
 
 def print_data_info(stimulus_train, spikes_train):
     n_stimulus, n_channels, img_size, _ = stimulus_train.shape
@@ -723,6 +780,22 @@ def print_data_info(stimulus_train, spikes_train):
     print('The number of bins of neuron spiking rate is {}'.format(n_bins))
 
 def compute_metrics(y_true, y_pred,data_type):
+    """
+    Computes a suite of regression evaluation metrics comparing predicted and true values.
+
+    Metrics computed:
+    - R² score (coefficient of determination)
+    - Mean Squared Error (MSE)
+    - Mean Absolute Error (MAE)
+    - Mean Absolute Percentage Error (MAPE)
+    - Explained Variance (both per output and averaged)
+    - Pearson correlation coefficient (per output and average)
+
+    Parameters:
+    - y_true (np.ndarray): Ground truth target values, shape (n_samples, n_outputs).
+    - y_pred (np.ndarray): Predicted values from the model, same shape as y_true.
+    - data_type (str): Label or description of the data being evaluated (e.g., "train", "test").
+    """
     r2 = r2_score(y_true, y_pred)
     mse = mean_squared_error(y_true, y_pred)
     mae = mean_absolute_error(y_true, y_pred)
@@ -747,6 +820,25 @@ def log_metrics_in_csv(
     time_comput=float,
     out_path: str = "out/metrics_log.csv"
 ):
+    """
+    Logs model evaluation metrics into a CSV file, appending a new row with timestamped results.
+
+    Parameters:
+    - model_name (str): Name or identifier of the model.
+    - augmented (bool): Whether data augmentation was used (logged as 0 or 1).
+    - r2 (float): R-squared (coefficient of determination) score.
+    - mse (float): Mean squared error.
+    - mae (float): Mean absolute error.
+    - mape (float): Mean absolute percentage error.
+    - ev_avg (float): Explained variance averaged across outputs.
+    - corr_avg (float): Average Pearson correlation between predicted and true values.
+    - time_comput (float): Computation time for model training/evaluation (in seconds).
+    - out_path (str): Path to the CSV file where metrics will be logged. Defaults to 'out/metrics_log.csv'.
+
+    Behavior:
+    - If the CSV file doesn't exist, it creates it and writes the header.
+    - Each call appends a new row with the current timestamp and provided metrics.
+    """
     # Ensure output directory exists
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
@@ -810,93 +902,27 @@ def get_group_labels(object_labels):
 
     return np.array([assign(label) for label in object_labels])
 
-def seed_everything(seed=42):
-    """
-    Set random seeds for reproducibility.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
-def get_data(augmented: bool):
-    # Download and load IT data
-    path_to_data = 'data'
-    download_it_data(path_to_data)
-    
-    stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = load_it_data(path_to_data)
+# =============================================================================
+# UTILS : Plot functions
+# =============================================================================
 
-    # List unique training objects
-    unique = list(set(objects_train))
-    print("Unique objects in training set:", unique)
-    print("Number of unique objects:", len(unique))
-
-    # Print data info
-    print_data_info(stimulus_train, spikes_train)
-
-    return stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val
-
-def set_seed(seed):
-    """Sets the seed for reproducibility."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed) 
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-    os.environ['PYTHONHASHSEED'] = str(seed)
-
-def worker_init_fn(worker_id):
-    """Sets the seed for DataLoader workers."""
-    base_seed = torch.initial_seed()
-    seed = (base_seed + worker_id) % (2**32)
-    np.random.seed(seed)
-    random.seed(seed)
-
-# ============= Plots Functions ==============
 def set_plot_color(model_type):
     """
     Set color for plots based on model type.
     """
     if 'linear' in model_type or 'ridge' in model_type:
         return 'blue'
-    elif 'task' in model_type:
+    elif 'pretrained' in model_type:
         return 'red'
+    elif 'random' in model_type:
+        return 'orange'
     elif 'data' in model_type:
         return 'violet'
     elif 'ResNet' in model_type or 'VGG' in model_type:
         return 'green'
     else:
         raise ValueError(f"Unknown model type: {model_type}")
-
-def plot_neurons_metrics(y_val, y_pred):
-    """
-    Plot the correlation and explained variance for each neuron in a single figure.
-    """
-    # Set font to Arial and size 16
-    plt.rcParams['font.size'] = 16
-    correlations = np.array([np.corrcoef(y_val[:, i], y_pred[:, i])[0, 1] for i in range(y_val.shape[1])])
-    explained_variance = np.array([explained_variance_score(y_val[:, i], y_pred[:, i]) for i in range(y_val.shape[1])])
-    
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # Correlation Scatter Plot
-    axes[0].scatter(y_val.flatten(), y_pred.flatten(), alpha=0.5)
-    axes[0].plot([-1, 1], [-1, 1], linestyle='--', color='red')  # Diagonal line for slope 1
-    axes[0].set_xlabel("True Neural Activity")
-    axes[0].set_ylabel("Predicted Neural Activity")
-    axes[0].set_title("Correlation of Predicted and True Neural Activity")
-    
-    # Explained Variance Plot
-    axes[1].bar(range(y_val.shape[1]), explained_variance)
-    axes[1].set_xlabel("Neuron Index")
-    axes[1].set_ylabel("Explained Variance")
-    axes[1].set_title("Explained Variance of Predicted Neural Activity")
-    
-    plt.tight_layout()
-    plt.show()
 
 def plot_corr_ev_distribution(r_values, ev_values, model_name): 
     """Plot the distribution of Pearson correlation coefficients and explained variance scores for all neurons as percentages."""
@@ -950,125 +976,6 @@ def plot_corr_ev_distribution(r_values, ev_values, model_name):
     plt.close()
     print(f"Saved correlation and explained variance histograms to: {outpath}")
 
-def plot_corr_ev_distribution2(r_values, ev_values, model_name): 
-    """Plot the distribution of Pearson correlation coefficients and explained variance scores for all neurons."""
-
-    # Set font size and style
-    plt.rcParams['font.size'] = 14
-    color = set_plot_color(model_name)
-    fig, ax = plt.subplots(2, 2, figsize=(7, 3), gridspec_kw={'height_ratios': [1, 3]})
-
-    # --- Correlation Coefficient Boxplot ---
-    sns.boxplot(x=r_values, color=color, ax=ax[0, 0], linecolor='black', linewidth=1, width=0.5)
-    ax[0, 0].set_xlabel("")
-    ax[0, 0].set_ylabel("")
-    ax[0, 0].set_xlim(0, 1)  # Match histogram limits
-    ax[0, 0].tick_params(bottom=False, labelbottom=False, left=False, labelleft=False)
-    for spine in ax[0, 0].spines.values():
-        spine.set_visible(False)
-
-    # --- Correlation Coefficient Histogram ---
-    sns.histplot(r_values, color=color, ax=ax[1, 0])
-    ax[1, 0].set_xlim(0, 1)
-    ax[1, 0].set_ylim(0, 50)
-    #ax[1, 0].set_ylabel("")
-    ax[1, 0].spines['top'].set_visible(False)
-    ax[1, 0].spines['right'].set_visible(False)
-
-    # --- Explained Variance Boxplot ---
-    sns.boxplot(x=ev_values, color=color, ax=ax[0, 1], linecolor='black', linewidth=1, width=0.5)
-    ax[0, 1].set_xlabel("")
-    ax[0, 1].set_ylabel("")
-    ax[0, 1].set_xlim(0, 1)
-    ax[0, 1].tick_params(bottom=False, labelbottom=False, left=False, labelleft=False)
-    for spine in ax[0, 1].spines.values():
-        spine.set_visible(False)
-
-    # --- Explained Variance Histogram ---
-    sns.histplot(ev_values, color=color, ax=ax[1, 1])
-    ax[1, 1].set_xlim(0, 1)
-    ax[1, 1].set_ylim(0, 50)
-    #ax[1, 1].set_ylabel("")
-    ax[1, 1].spines['top'].set_visible(False)
-    ax[1, 1].spines['right'].set_visible(False)
-
-    plt.tight_layout()
-    os.makedirs("out/corr_exp_var_histogram", exist_ok=True)
-    outpath = f"out/corr_exp_var_histogram/{model_name}_hist.png"
-    plt.savefig(outpath, dpi=300)
-    plt.close()
-    print(f"Saved correlation and explained variance histograms to: {outpath}")
-
-def plot_layer_comparison(results, n_components, save=False, path=None):
-    """Compare pretrained vs random distributions for each layer's metrics using boxplots and histograms.
-    
-    Args:
-        results (dict): Nested dictionary containing 'pearson' and 'explained_variance'
-                        for 'pretrained' and 'random' models, organized by layer.
-    """
-    for layer in results:
-        # Create figure with 2x2 grid (2 metrics x 2 plot types)
-        fig, axes = plt.subplots(2, 2, figsize=(14, 8), 
-                                gridspec_kw={'height_ratios': [1, 3]})
-        fig.suptitle(f'{layer} layer', y=1.02, fontsize=20)
-        
-        pearson_pre = results[layer]['pearson']['pretrained']
-        pearson_rand = results[layer]['pearson']['random']
-        ev_pre = results[layer]['explained_variance']['pretrained']
-        ev_rand = results[layer]['explained_variance']['random']
-        
-        df_pearson = pd.DataFrame({
-            'Model': ['Pretrained']*len(pearson_pre) + ['Random']*len(pearson_rand),
-            'Value': np.concatenate([pearson_pre, pearson_rand])
-        })
-        
-        df_ev = pd.DataFrame({
-            'Model': ['Pretrained']*len(ev_pre) + ['Random']*len(ev_rand),
-            'Value': np.concatenate([ev_pre, ev_rand])
-        })
-        
-        mean_marker_props = {
-            'marker': '^',
-            'markerfacecolor': 'white',
-            'markeredgecolor': 'black',
-            'markersize': 8,
-            'markeredgewidth': 1.5,
-        }
-        # Pearson plots
-        sns.boxplot(data=df_pearson, x='Value', y='Model', ax=axes[0,0], orient='h', hue='Model',
-                    palette=['#66b3ff', '#ff9999'], width=0.5, linecolor='black', showmeans=True, meanprops=mean_marker_props)
-        axes[0,0].set_title('Correlation Coefficient Distribution', fontsize=18)
-        axes[0,0].set_xlabel('')
-        axes[0,0].set_ylabel('')
-        axes[0,0].grid(True, alpha=0.3, linestyle='--')
-        
-        sns.histplot(data=df_pearson, x='Value', hue='Model', ax=axes[1,0], 
-                    palette=['#66b3ff', '#ff9999'], alpha=0.5, bins=20)
-        axes[1,0].set_xlabel('Correlation Coefficient', fontsize=18)
-        axes[1,0].set_ylabel('Frequency', fontsize=18)
-        axes[1,0].grid(True, alpha=0.3, linestyle='--')
-        
-        # Explained variance plots
-        sns.boxplot(data=df_ev, x='Value', y='Model', ax=axes[0,1], orient='h', hue='Model',
-                    palette=['#66b3ff', '#ff9999'], width=0.5, linecolor='black', showmeans=True, meanprops=mean_marker_props)
-        axes[0,1].set_title('Explained Variance Distribution', fontsize=18)
-        axes[0,1].set_xlabel('')
-        axes[0,1].set_ylabel('')
-        axes[0,1].grid(True, alpha=0.3, linestyle='--')
-        
-        sns.histplot(data=df_ev, x='Value', hue='Model', ax=axes[1,1], 
-                    palette=['#66b3ff', '#ff9999'], alpha=0.5, bins=20)
-        axes[1,1].set_xlabel('Explained Variance', fontsize=18)
-        axes[1,1].set_ylabel('Frequency', fontsize=18)
-        axes[1,1].grid(True, alpha=0.3, linestyle='--')
-        
-        plt.tight_layout()
-
-        if save:
-            plt.savefig(os.path.join(path, f'/{n_components}pcs/{layer}_comparison.pdf'), bbox_inches='tight')
-
-        plt.show()
-
 def plot_population_rdm_analysis(predicted_responses, true_responses, object_labels, model_name, metric='correlation'):
     """
     Computes Representational Dissimilarity Matrices (RDMs) for predicted and true neural population
@@ -1092,7 +999,6 @@ def plot_population_rdm_analysis(predicted_responses, true_responses, object_lab
     Returns:
     - spearman_rho (float): Spearman correlation coefficient between predicted and true RDMs.
     """
-    
     assert predicted_responses.shape == true_responses.shape, "Shapes must match"
     n = predicted_responses.shape[0]
     # Set font to Arial and size 16
@@ -1143,6 +1049,16 @@ def plot_population_rdm_analysis(predicted_responses, true_responses, object_lab
     rdm_true_ranked = rank_normalize(rdm_true)
 
     def plot_rdm(rdm, title, filename):
+        """
+        Plots a Representational Dissimilarity Matrix (RDM) with group-based tick labels
+        and saves it to a specified file.
+
+        Parameters:
+        - rdm (np.ndarray): The RDM to plot (2D square matrix with values between 0 and 1).
+        - title (str): Title for the plot.
+        - filename (str): File path to save the resulting image (PNG format).
+        """
+
         plt.figure(figsize=(6, 5))
         plt.imshow(rdm, cmap='jet', vmin=0, vmax=1)
         #plt.title(f"{title} (Spearman ρ = {spearman_rho:.3f})")
@@ -1255,3 +1171,746 @@ def plot_neuron_site_response(predicted_responses, true_responses, object_labels
     plt.savefig(outpath, dpi=300)
     plt.close()
     print(f"Saved neuron response plot to: {outpath}")
+
+def visualize_img(stimulus,objects,stim_idx):
+    """Visualize image given the stimulus and corresponding index and the object name.
+
+    Args:
+        stimulus (array of float): Stimulus containing all the images
+        objects (list of str): Object list containing all the names
+        stim_idx (int): Index of the stimulus to plot
+    """    
+    normalize_mean=[0.485, 0.456, 0.406]
+    normalize_std=[0.229, 0.224, 0.225]
+
+    img_tmp = np.transpose(stimulus[stim_idx],[1,2,0])
+
+    ### Go back from normalization
+    img_tmp = (img_tmp*normalize_std + normalize_mean) * 255
+
+    plt.figure()
+    plt.imshow(img_tmp.astype(np.uint8),cmap='gray')
+    plt.title(str(objects[stim_idx]))
+    plt.show()
+    return
+
+def plot_layer_comparison(ev_scores, layers_of_interest, model_type):
+    """
+    Generates a bar plot comparing explained variance scores across different layers of a model.
+    
+    Args:
+        ev_scores (list or np.ndarray): List of explained variance scores (as fractions or percentages).
+        layers_of_interest (list): List of layer names or identifiers.
+        model_type (str): Type or name of the model (e.g., 'ResNet', 'VGG').
+
+    Saves the plot to: out/layer_comparison/{model_type}_layer_comparison.png
+    """
+    # Convert EV scores to percentage if they appear to be in [0, 1]
+    if max(ev_scores) <= 1.0:
+        ev_scores = [score * 100 for score in ev_scores]
+
+    plt.figure(figsize=(10, 5))
+    plt.bar(layers_of_interest, ev_scores, color=set_plot_color(model_type))
+    plt.ylim(0, 40)  # y-axis limit set from 0 to 40
+    plt.xticks(rotation=45, ha='right')
+    
+    # Style tweaks
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    plt.tight_layout()
+
+    # Ensure output directory exists
+    os.makedirs("out/layer_comparison", exist_ok=True)
+    outpath = f"out/layer_comparison/{model_type}_layer_comparison.png"
+    plt.savefig(outpath, dpi=300)
+    plt.close()
+
+    print(f"Saved layer comparison plot to: {outpath}")
+
+
+
+# =============================================================================
+# RUN : Model Function Definitions
+# =============================================================================
+
+# =======  PART 1a =======  
+def run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running Linear Regression model...")
+
+    # Vectorize input data
+    X_train = stimulus_train.reshape(stimulus_train.shape[0], -1)
+    X_val = stimulus_val.reshape(stimulus_val.shape[0], -1)
+
+    # Train model on full training set
+    start_time = time.time()
+    model = LinearRegression()
+    model.fit(X_train, spikes_train)
+    computation_time = time.time() - start_time
+    print(f"done. Computation time: {computation_time:.4f}")
+
+    # Evaluate on validation set (optional)
+    spikes_val_pred = model.predict(X_val)
+    val_mse = mean_squared_error(spikes_val, spikes_val_pred)
+    print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
+
+    # Compute metrics for training and validation set
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name="linear_val",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
+
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val, 'linear')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'linear', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'linear')
+
+def run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running Linear Regression with PCA...")
+
+    # Compute PCA
+    X_train, X_val = get_pca(stimulus_train.reshape(stimulus_train.shape[0], -1), stimulus_val.reshape(stimulus_val.shape[0], -1), n_components=1000, model_type='linear_model')
+
+    # Train model on full training set
+    start_time = time.time()
+    model = LinearRegression()
+    model.fit(X_train, spikes_train)
+    computation_time = time.time() - start_time
+    print(f"done. Computation time: {computation_time:.4f}")
+
+    # Evaluate on validation set (optional)
+    spikes_val_pred = model.predict(X_val)
+    val_mse = mean_squared_error(spikes_val, spikes_val_pred)
+    print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
+
+    # Compute metrics for training and validation set
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name="linear_pca_val",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
+
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val, 'linear_pca')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'linear_pca', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'linear_pca')
+
+def run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running Ridge Regression with 5-fold CV...")
+
+    X_train = stimulus_train.reshape(stimulus_train.shape[0], -1)
+    X_val = stimulus_val.reshape(stimulus_val.shape[0], -1)
+
+    # Ridge regression setup
+    alphas = np.logspace(5, 6, 10)
+    ridge = Ridge()
+
+    # Stratified K-Fold using class labels
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    # Grid search with stratified CV
+    grid = GridSearchCV(
+        estimator=ridge,
+        param_grid={'alpha': alphas},
+        scoring='neg_mean_squared_error',
+        cv=skf.split(X_train, objects_train),
+        n_jobs=-1,
+        verbose=1
+    )
+
+    # Fit grid search
+    start_time = time.time()
+
+    grid.fit(X_train, spikes_train)
+
+    computation_time = time.time() - start_time
+    print(f"Grid Search Computation time: {computation_time:.4f}")
+    
+    # Best model and parameter
+    print(f"\nBest alpha: {grid.best_params_['alpha']}")
+    print(f"Best CV MSE: {-grid.best_score_:.4f}")
+
+    # Train best model on full training set
+    start_time = time.time()
+    model = Ridge(alpha=grid.best_params_['alpha'])
+    model.fit(X_train, spikes_train)
+    computation_time = time.time() - start_time
+    print(f"done. Computation time: {computation_time:.4f}")
+
+    # Evaluate on validation set (optional)
+    spikes_val_pred = model.predict(X_val)
+    val_mse = mean_squared_error(spikes_val, spikes_val_pred)
+    print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
+
+    # Compute metrics for training and validation set
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name="ridge_cv5_val",augmented=augmented,r2=r2_val,mse=mse_val,mae=mae_val,mape=mape_val,ev_avg=ev_avg_val,corr_avg=corr_avg_val,time_comput=computation_time)
+
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val,'ridge_cv5')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'ridge_cv5', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'ridge_cv5')
+
+def run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running Ridge Regression with PCA and 5-fold CV...")
+
+    # Normalize data
+    """ scaler = StandardScaler()
+    stimulus_train = scaler.fit_transform(stimulus_train.reshape(stimulus_train.shape[0], -1))
+    stimulus_val = scaler.transform(stimulus_val.reshape(stimulus_val.shape[0], -1))
+    stimulus_test = scaler.transform(stimulus_test.reshape(stimulus_test.shape[0], -1)) """
+    # Compute PCA
+    X_train, X_val = get_pca(stimulus_train.reshape(stimulus_train.shape[0], -1), 
+                             stimulus_val.reshape(stimulus_val.shape[0], -1), 
+                             n_components=1000, model_type='ridge_model')
+
+    # Ridge regression setup
+    alphas = np.logspace(5,6,10)
+    ridge = Ridge()
+
+    # Stratified K-Fold using class labels
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    # Grid search with stratified CV
+    grid = GridSearchCV(
+        estimator=ridge,
+        param_grid={'alpha': alphas},
+        scoring='neg_mean_squared_error',
+        cv=skf.split(X_train, objects_train),
+        n_jobs=-1,
+        verbose=1
+    )
+
+    # Fit grid search
+    start_time = time.time()
+
+    grid.fit(X_train, spikes_train)
+
+    computation_time = time.time() - start_time
+    print(f"Grid Search Computation time: {computation_time:.4f}")
+    
+    # Best model and parameter
+    print(f"\nBest alpha: {grid.best_params_['alpha']}")
+    print(f"Best CV MSE: {-grid.best_score_:.4f}")
+
+    # Train best model on full training set
+    start_time = time.time()
+    model = Ridge(alpha=grid.best_params_['alpha'])
+    model.fit(X_train, spikes_train)
+    computation_time = time.time() - start_time
+    print(f"done. Computation time: {computation_time:.4f}")
+
+    # Evaluate on validation set (optional)
+    spikes_val_pred = model.predict(X_val)
+    spikes_train_pred = model.predict(X_train)
+    val_mse = mean_squared_error(spikes_val, spikes_val_pred)
+    print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
+    print(spikes_val_pred.shape)
+
+    # Compute metrics for training and validation set
+    (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred,'train')
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name='ridge_pca_cv5_val', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+    log_metrics_in_csv(model_name='ridge_pca_cv5_train', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
+    
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val,'ridge_pca_cv5')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, 'ridge_pca_cv5', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, 'ridge_pca_cv5')
+
+# =======  PART 1b ========
+def run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented,model_type,verbose=True):
+    print(f"=== Running Task-driven model ({model_type} weights) using {'augmented' if augmented else 'original'} dataset ===")
+    
+    # === Parameters ====
+    DATA_PATH =f'data/task_driven_models'
+    BATCH_SIZE = 100
+    N_PCA = 1000
+    # ===================
+
+    layers_of_interest = ['conv1', 'layer1', 'layer2', 'layer3', 'layer4', 'avgpool']
+
+     # Create output directories for saving activations and PCA models
+    save_dir_pc =  os.path.join(DATA_PATH,f"{N_PCA}pcs",f"{model_type}_pca")
+    os.makedirs(save_dir_pc, exist_ok=True)
+
+    # Set up feature extractor
+    feature_extractor = create_feature_extractor(model, return_nodes={layer: layer for layer in layers_of_interest}).to(device)
+    feature_extractor.eval()
+
+    # === Collect activations ===
+    def collect_activations(loader):
+        activations = []
+        for batch_x, _ in tqdm(loader, desc=f"Extracting {layer_name}"):
+            with torch.no_grad():
+                features = feature_extractor(batch_x)[layer_name]
+                activations.append(features.view(features.size(0), -1).cpu().numpy())
+        return np.concatenate(activations, axis=0)
+    # === Prepare data loaders ===
+    def get_dataloader(stimulus, spikes):
+        inputs = torch.tensor(stimulus).to(device)
+        outputs = torch.tensor(spikes).to(device)
+        dataset = TensorDataset(inputs, outputs)
+        return DataLoader(dataset, batch_size=BATCH_SIZE)
+    # =======================================================================================
+    
+    train_loader = get_dataloader(stimulus_train, spikes_train)
+    val_loader = get_dataloader(stimulus_val, spikes_val)
+
+    compute_pcs = len(os.listdir(save_dir_pc)) < len(layers_of_interest) * 3
+    if compute_pcs:
+        # === Extract activations and apply PCA ===
+        for layer_name in layers_of_interest:
+            print(f"\nProcessing layer: {layer_name} ===")
+
+            X_train_acts = collect_activations(train_loader)
+            X_val_acts = collect_activations(val_loader)
+
+            # === PCA ===
+            print("Fitting PCA on train activations...")
+            pca = PCA(n_components=N_PCA)
+            X_train_pcs = pca.fit_transform(X_train_acts)
+            X_val_pcs = pca.transform(X_val_acts)
+
+            # === Save PCA model and PCs ===
+            pca_path = os.path.join(save_dir_pc, f'{layer_name}_pca_model.pkl')
+            with open(pca_path, 'wb') as f:
+                pickle.dump(pca, f)
+
+            np.save(os.path.join(save_dir_pc, f'{layer_name}_train_pcs.npy'), X_train_pcs)
+            np.save(os.path.join(save_dir_pc, f'{layer_name}_val_pcs.npy'), X_val_pcs)
+
+            print(f"Saved PCA model and PCs for {layer_name}")
+
+    
+    # ======== Evaluate the taks-driven model using the PCA-reduced representations ======== 
+    print("Apply PCs to activations and fit a linear Ridge regression model to predict brain activity")
+
+
+    ev_scores = []
+    for layer_name in layers_of_interest:
+
+        # Load precomputed PCs
+        X_train = np.load(os.path.join(save_dir_pc, f'{layer_name}_train_pcs.npy'))
+        X_val = np.load(os.path.join(save_dir_pc, f'{layer_name}_val_pcs.npy'))
+
+
+        # ======= Ridge regression setup ======= 
+        print(f"\n{layer_name}\n===============")
+        #print(f"{layer_name} Linear Regression using Ridge (grid search on alpha)")
+        alphas = np.logspace(-3,6, 100)
+        ridge = Ridge(max_iter=1000,fit_intercept=True,random_state=42)
+
+        # Stratified K-Fold using class labels
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+        # Grid search with stratified CV
+        grid = GridSearchCV(
+            estimator=ridge,
+            param_grid={'alpha': alphas},
+            scoring='neg_mean_squared_error',
+            cv=skf.split(X_train, objects_train),
+            n_jobs=-1,
+            verbose=0
+        )
+
+        # Fit grid search
+        start_time = time.time()
+
+        grid.fit(X_train, spikes_train)
+
+        computation_time = time.time() - start_time
+        #print(f"Grid Search Computation time: {computation_time:.4f}")
+        
+        # Best model and parameter
+        print(f"Best alpha: {grid.best_params_['alpha']}")
+        #print(f"Best CV MSE: {-grid.best_score_:.4f}")
+
+        # Train best model on full training set
+        start_time = time.time()
+        ridge_model = Ridge(alpha=grid.best_params_['alpha'],max_iter=1000,fit_intercept=True,random_state=42)
+        ridge_model.fit(X_train, spikes_train)
+        computation_time = time.time() - start_time
+        #print(f"done. Computation time: {computation_time:.4f}")
+
+        # Evaluate on validation set (optional)
+        spikes_val_pred = ridge_model.predict(X_val)
+        spikes_train_pred = ridge_model.predict(X_train)
+        val_mse = mean_squared_error(spikes_val, spikes_val_pred)
+        #print(f"Validation MSE with best Ridge model: {val_mse:.4f}")
+
+        # Compute metrics for training and validation set
+        (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(spikes_train, spikes_train_pred,'train')
+        (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(spikes_val, spikes_val_pred,'val')
+        log_metrics_in_csv(model_name=f'task_driven_val_{model_type}_{layer_name}', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+        log_metrics_in_csv(model_name=f'task_driven_train_{model_type}_{layer_name}', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
+        ev_scores.append(ev_avg_val)
+
+       # plot correlation and explained-variance distribution
+        plot_corr_ev_distribution(corr_val, ev_val, f'task_driven_{model_type}_{layer_name}')
+
+        # plot dissimilarity matrix on validation set
+        plot_population_rdm_analysis(spikes_val_pred,spikes_val, objects_val, f'task_driven_{model_type}_{layer_name}', metric='correlation')
+
+        # plot neuron site brain activity prediction
+        #for site in [23,39,42,56,71,95,107,132,139,152]:
+        for site in [39,107,152]:
+            plot_neuron_site_response(spikes_val_pred,spikes_val, objects_val, site, f'task_driven_{model_type}_{layer_name}')
+
+    plot_layer_comparison(ev_scores, layers_of_interest, model_type)
+
+def run_task_driven_pretrained(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1).to(device)
+    run_task_driven(model,device,stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented,model_type='pretrained')
+
+def run_task_driven_random(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = resnet50(weights=None).to(device)
+    run_task_driven(model, device, stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val, augmented,model_type='random')
+
+
+# ======= PART 2  =======
+def run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running Data-driven model...")
+
+    data_path = 'data'
+    stim_train, stim_val, *_ , spikes_train, spikes_val = load_it_data(data_path)
+    _, _, H, _ = stim_train.shape
+    _, n_neurons = spikes_train.shape
+
+    train_ds = ITDataset(stim_train, spikes_train, objects_train)
+    val_ds   = ITDataset(stim_val,   spikes_val, objects_val)
+    train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
+    val_loader   = DataLoader(val_ds,   batch_size=32, shuffle=True)
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = ShallowCNN(n_neurons).to(device)
+
+    start_time = time.time()
+    print("Training model...")
+    model, metrics = train_model(model, train_loader, val_loader, device,
+                                 num_epochs=40, learning_rate=1e-3)
+    computation_time = time.time() - start_time
+    spikes_val_pred, targs_val, objects_val = evaluate_model(model, val_loader, device)
+    spikes_train_pred, targs_train, objects_train = evaluate_model(model, train_loader, device)
+    #save_training_plots(metrics)
+
+    # Compute metrics for training and validation set
+    (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(targs_train, spikes_train_pred,'train')
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(targs_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name='data_driven_shallow_cnn', augmented=augmented, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+    log_metrics_in_csv(model_name='data_driven_shallow_cnn', augmented=augmented, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
+    
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val,'data_driven_shallow_cnn')
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred, targs_val, objects_val, 'data_driven_shallow_cnn', metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,targs_val, objects_val, site, 'data_driven_shallow_cnn')
+
+# ======= PART 3  =======
+def run_experiment(config, n_neurons, train_loader, val_loader, device):
+    """Runs a single training experiment with the given configuration."""
+    exp_name = config.get('name', f"exp_{int(time.time())}")
+    print(f"\n===== Starting Experiment: {exp_name} =====")
+    start_time = time.time()
+
+    current_seed = config.get('seed', SEED)
+    set_seed(current_seed)
+    print(f"Using Seed: {current_seed}")
+
+    # --- Initialize Model based on architecture ---
+    model_config = config.get('model_config', {})
+    architecture = model_config.get('architecture', 'resnet').lower()  # Default to ResNet if not specified
+    pretrained = model_config.get('pretrained', True)                  # Default to pretrained weights
+    freeze_features = model_config.get('freeze_features', False)       # Default to full training
+    unfreeze_blocks = model_config.get('unfreeze_blocks', 0)           # Default to 0 blocks
+    classifier_config = model_config.get('classifier', None)           # Default to classifier implemented in each model class
+    
+    if architecture == 'resnet':
+        resnet_version = model_config.get('resnet_version', 'resnet34')  # Default to ResNet34
+        model = ResNetAdapter(
+            n_neurons,
+            resnet_version=resnet_version,
+            pretrained=pretrained,
+            classifier_config=classifier_config,
+            freeze_features=freeze_features,
+            unfreeze_blocks=unfreeze_blocks
+        )
+        print(f"Model: {resnet_version.upper()} Adapter")
+    elif architecture == 'vgg_bn':
+        model = VGG_BN(
+            n_neurons,
+            pretrained=pretrained,
+            classifier_config=classifier_config,
+            freeze_features=freeze_features,
+            unfreeze_blocks=unfreeze_blocks
+        )
+        print(f"Model: VGG_BN")
+    else:
+        raise ValueError(f"Unsupported architecture: {architecture}")
+    
+    print(f"Model Config: {model_config}")
+
+    # --- Training parameters ---
+    train_params = config.get('train_params', {})
+    num_epochs = train_params.get('num_epochs', 30)
+    patience = train_params.get('patience', 5)
+
+    optimizer_config = config.get('optimizer', {'name': 'AdamW', 'params': {'lr': 1e-4, 'weight_decay': 1e-5}})
+    scheduler_config = config.get('scheduler', {'name': 'CosineAnnealingLR', 'params': {}})
+
+    # --- Train the model ---
+    start_time = time.time()
+    model, metrics, best_val_ev = train_model_best(
+        model,
+        train_loader,
+        val_loader,
+        device,
+        optimizer_config=optimizer_config,
+        scheduler_config=scheduler_config,
+        num_epochs=num_epochs,
+        patience=patience
+    )
+    computation_time = time.time() - start_time
+    # --- Evaluate the model ---
+    print("\nFinal evaluation on validation set using best model:")
+    spikes_train_pred, targs_train, objects_train = evaluate_model(model, train_loader, device)
+    spikes_val_pred, targs_val, objects_val = evaluate_model(model, val_loader, device)
+
+    end_time = time.time()
+    duration = end_time - start_time
+    
+    # Compute metrics for training and validation set
+    (r2_train, mse_train, mae_train, mape_train, ev_train, ev_avg_train, corr_train, corr_avg_train) = compute_metrics(targs_train, spikes_train_pred,'train')
+    (r2_val, mse_val, mae_val, mape_val, ev_val, ev_avg_val, corr_val, corr_avg_val) = compute_metrics(targs_val, spikes_val_pred,'val')
+    log_metrics_in_csv(model_name= exp_name + '_val', augmented=False, r2=r2_val, mse=mse_val, mae=mae_val, mape=mape_val, ev_avg=ev_avg_val, corr_avg=corr_avg_val, time_comput=computation_time)
+    log_metrics_in_csv(model_name=exp_name + '_train', augmented=False, r2=r2_train, mse=mse_train, mae=mae_train, mape=mape_train, ev_avg=ev_avg_train, corr_avg=corr_avg_train, time_comput=computation_time)
+    
+    print(f"===== Experiment Finished: {exp_name} | Best Val EV: {best_val_ev:.4f} | Final Val EV: {ev_avg_val:.4f} | Duration: {duration:.2f}s =====")
+
+    # plot correlation and explained-variance distribution
+    plot_corr_ev_distribution(corr_val, ev_val,exp_name)
+
+    # plot dissimilarity matrix on validation set
+    plot_population_rdm_analysis(spikes_val_pred, targs_val, objects_val, exp_name, metric='correlation')
+
+    # plot neuron site brain activity prediction
+    for site in [39,107,152]:
+        plot_neuron_site_response(spikes_val_pred,targs_val, objects_val, site, exp_name)
+
+    # Return metrics 
+    return {
+        'config_name': exp_name, 
+        'architecture': architecture,
+        'best_val_ev': best_val_ev, 
+        'final_val_ev': ev_val, 
+        'final_val_r2': r2_val, 
+        'duration_s': duration, 
+        'seed': current_seed, 
+        'config': config
+    }
+
+def run_vgg_bn(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running VGG model (2nd best model)...")
+    train_ds = ITDataset(stimulus_train, spikes_train, objects_train, transform=None) 
+    val_ds = ITDataset(stimulus_val, spikes_val, objects_val, transform=None)      
+
+    num_workers = 1 
+    batch_size = 128 
+    g_main = torch.Generator()
+    g_main.manual_seed(SEED)
+    train_loader = data.DataLoader(train_ds, 
+                                   batch_size=batch_size, 
+                                   shuffle=True,
+                                   num_workers=num_workers, 
+                                   worker_init_fn=worker_init_fn, 
+                                   generator=g_main)
+    val_loader = data.DataLoader(val_ds, 
+                                 batch_size=batch_size, 
+                                 shuffle=False,
+                                 num_workers=num_workers, 
+                                 worker_init_fn=worker_init_fn, 
+                                 generator=g_main)
+
+    config = {
+             'name': 'VGG_Wider_7000x2_D0.47_StepLR_15_0.5', 
+             'model_config': {
+                 'architecture': 'vgg_bn',           
+                 'pretrained': True,
+                 'freeze_features': False,
+                 'classifier': {'hidden_sizes': [7000, 7000], 'activation': 'relu', 'dropout': 0.47}
+             },
+             'optimizer': {'name': 'AdamW', 'params': {'lr': 1e-4, 'weight_decay': 1e-5}},
+             'scheduler': {'name': 'StepLR', 'params': {'step_size': 15, 'gamma': 0.5}}, 
+             'train_params': {'num_epochs': 60, 'patience': 7}
+        }
+
+    _, n_neurons = spikes_train.shape
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    _ = run_experiment(config, n_neurons, train_loader, val_loader, device)
+
+def run_resnet_adapter(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running ResNet34 Adapter model (best model)...")
+    train_ds = ITDataset(stimulus_train, spikes_train, objects_train, transform=None) 
+    val_ds = ITDataset(stimulus_val, spikes_val, objects_val, transform=None)      
+
+    num_workers = 1 # initially 2 but warning
+    batch_size = 128 
+    g_main = torch.Generator()
+    g_main.manual_seed(SEED)
+    train_loader = data.DataLoader(train_ds, 
+                                   batch_size=batch_size, 
+                                   shuffle=True,
+                                   num_workers=num_workers, 
+                                   worker_init_fn=worker_init_fn, 
+                                   generator=g_main)
+    val_loader = data.DataLoader(val_ds, 
+                                 batch_size=batch_size, 
+                                 shuffle=False,
+                                 num_workers=num_workers, 
+                                 worker_init_fn=worker_init_fn, 
+                                 generator=g_main)
+
+    config = {
+            'name': 'ResNet34_7000x2_classifier_0.52',
+            'model_config': {
+                'architecture': 'resnet',            
+                'resnet_version': 'resnet34',        
+                'pretrained': True,
+                'freeze_features': False, 
+                'classifier': {'hidden_sizes': [7000, 7000], 'activation': 'relu', 'dropout': 0.52}
+            },
+            'optimizer': {'name': 'Adam', 'params': {'lr': 1e-4, 'weight_decay': 1e-5}},
+            'scheduler': {'name': 'StepLR', 'params': {'step_size': 15, 'gamma': 0.5}}, 
+            'train_params': {'num_epochs': 60, 'patience': 10}
+        }
+
+    _, n_neurons = spikes_train.shape
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    _ = run_experiment(config, n_neurons, train_loader, val_loader, device)
+
+def run_best(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running Best model (as selected by validation performance)...")
+    run_resnet_adapter(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+
+def run_all(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented):
+    print("Running All models... ")
+
+    augmented = False
+    run_linear(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_linear_pca(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_ridge_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_ridge_pca_cv5(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_task_driven_pretrained(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_task_driven_random(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_data_driven(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_vgg_bn(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+    run_resnet_adapter(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,augmented)
+
+
+# =============================================================================
+# PARSER DEFINITION
+# =============================================================================
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="NX-414 - Predicting Neural Activity")
+
+    parser.add_argument(
+        "--model",
+        choices=[
+            "linear",
+            "linear_pca",
+            "ridge_cv5",
+            "ridge_pca_cv5",
+            "task_driven_pretrained",
+            "task_driven_random",
+            "data_driven",
+            "resnet_adapter",
+            "vgg_bn",
+            "best",
+            "all"
+        ],
+        default="best",
+        help=(
+            "Choose the model (default: best):\n"
+            "  linear               - Basic Linear Regression\n"
+            "  linear_pca           - Linear Regression with PCA\n"
+            "  ridge_cv5            - Ridge Regression with 5-fold Cross-Validation\n"
+            "  ridge_pca_cv5        - Ridge Regression with PCA and CV\n"
+            "  enet_pca_cv5         - Elastic Net Regression with PCA and CV\n"
+            "  task_driven_pretrained  - Task-driven model using trained weights\n"
+            "  task_driven_random   - Task-driven model using random weights\n"
+            "  data_driven          - Data-driven model\n"
+            "  resnet_adapter       - ResNet Adapter model\n"
+            "  vgg_bn              - VGG model\n"
+            "  best                 - Best-performing model => resnet_adapter\n"
+            "  all                  - Run all models sequentially and output metrics as CSV"
+        )
+    )
+
+    parser.add_argument(
+        "--augment",
+        action="store_true",
+        help="Use augmented dataset instead of original"
+    )
+
+    return parser.parse_args()
+
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
+if __name__ == "__main__":
+    args = parse_args()
+
+    # Fix seed to 42
+    # Set the seed globally 
+    SEED = 42
+    set_seed(SEED)
+    
+    # Load data and compute PCA
+    stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val = get_data()
+
+    # run selected model
+    model_map = {
+        "linear": run_linear,
+        "linear_pca": run_linear_pca,
+        "ridge_cv5": run_ridge_cv5,
+        "ridge_pca_cv5": run_ridge_pca_cv5,
+        "task_driven_pretrained": run_task_driven_pretrained,
+        "task_driven_random": run_task_driven_random,
+        "data_driven": run_data_driven,
+        "resnet_adapter": run_resnet_adapter,
+        "vgg_bn": run_vgg_bn,
+        "best": run_best,
+        "all": run_all,
+    }
+
+    model_function = model_map.get(args.model)
+    if model_function:
+        model_function(stimulus_train, stimulus_val, stimulus_test, objects_train, objects_val, objects_test, spikes_train, spikes_val,args.augment)
+    else:
+        print("Invalid model selected.")

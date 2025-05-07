@@ -2,6 +2,7 @@
 data/
 figures/
 out/
+old/
 notebooks/IT_data.h5
 notebooks/
 src/main_gomar.py
@@ -19,6 +20,7 @@ __pycache__/
 *.pyo
 *.npy
 *.pkl
+
 src/utils_sylvain.py
 /notebooks/sylvainshan
 Majaj et al.pdf
