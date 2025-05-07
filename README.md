@@ -6,7 +6,7 @@ This project provides a modular pipeline for training and evaluating different m
 
 ## 🚀 Getting Started
 
-Make sure all required dependencies are installed (e.g. `numpy`, `scikit-learn`, etc.), then run:
+Make sure all required dependencies are installed (`numpy`, `pandas`, `matplotlib`, `seaborn`, `torch`, `torchvision`, `scikit-learn`, `h5py`, `gdown`, `tqdm`, `scipy`), then run:
 
 ```bash
 python main.py [--model MODEL_NAME] [--augment]
