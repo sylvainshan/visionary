@@ -145,4 +145,8 @@ project/
     └── rdm/         # Representational dissimilarity matrices plots
 ```
 
+## 🔒 Reproducibility
+
+To ensure reproducible results, we set random seeds for Python, NumPy, and PyTorch. This also includes configuring the CUDA backend and DataLoader workers. By fixing these seeds and environment variables, we minimize variability across runs, though minor variations in results might still be observed.
+
 ---
