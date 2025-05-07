@@ -30,9 +30,9 @@ Specifies which model to run.
 - `linear_pca` – Linear Regression with PCA
 - `ridge_cv5` – Ridge Regression with 5-fold Cross-Validation
 - `ridge_pca_cv5` – Ridge Regression with PCA and CV
-- `task-driven_trained` – Task-driven model using trained weights
-- `task-driven_random` – Task-driven model using random weights
-- `data-driven` – Data-driven shallow CNN model
+- `task_driven_trained` – Task-driven model using trained weights
+- `task_driven_random` – Task-driven model using random weights
+- `data_driven` – Data-driven shallow CNN model
 - `resnet_adapter` – Data-driven shallow CNN model (Best)
 - `vgg_bn` – Data-driven shallow CNN model
 - `best` – Best-performing model (default)
